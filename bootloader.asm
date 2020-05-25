@@ -55,7 +55,7 @@ LOGGING_ENABLED		equ	0
 
 	radix dec
 	list n=0,st=off
-	include "p16f1454.inc"
+	include "p16f1455.inc"
 	nolist
 	include "macros.inc"
 	include "bdt.inc"
