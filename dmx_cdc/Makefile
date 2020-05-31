@@ -14,6 +14,9 @@ OUT = yada_v2
 # Assembly files to assemble
 ASM = yada_v2.asm
 
+# INC files
+INC = dmx.inc
+
 # The SDCC-specific (case sensitive) part number of the chip
 # (use `make list-devices` if not known)
 AS_DEVICE = 16f1455
@@ -32,7 +35,7 @@ HEX = $(OUT).hex
 
 
 # Link
-$(HEX): $(ASM)
+$(HEX): $(ASM) $(INC)
 	$(AS) -I .. -p$(AS_DEVICE) -o $@ $<
 
 # Disassemble

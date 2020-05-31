@@ -45,7 +45,8 @@
 
 ; Use this only for debugging!
 ; For more info, see log_macros.inc and log.asm.
-LOGGING_ENABLED		equ	1
+LOGGING_ENABLED		equ	0
+USE_BOOTLOADER_CDC	equ 	1
 USB_INTERRUPTS		equ	1
 
 
@@ -120,8 +121,7 @@ EPBUF_ADRH		equ	(EP0OUT_BUF>>8)
 ; Total length of all RAM (variables, buffers, BDT entries) used by the bootloader,
 USED_RAM_LEN		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE-BDT_START
 
-DMX_BUFFER 		equ 	0x2200
-BLINK_COUNT		equ	USED_RAM_LEN+2
+DmxUniverse 		equ 	0x2200
 
 ;--------------------------------------------------------
 ; global declarations
@@ -131,15 +131,15 @@ BLINK_COUNT		equ	USED_RAM_LEN+2
 ; - - - - - - - - - - - - - - 
 ; API from bootloader
 ; - - - - - - - - - - - - - - 
-APP_STARTUP org 0x200
+ org APP_ENTRY_POINT
   pagesel _app_main
   goto    _app_main
 
-APP_CONFIG org 0x202
+ org APP_CONFIG
   pagesel _app_config
   goto    _app_config ; must end with 'retlw' instruction
 
-APP_INTERRUPT org 0x204
+ org APP_INTERRUPT
   pagesel _app_interrupt
   call    _app_interrupt
   retfie
@@ -152,16 +152,19 @@ _app_config
 
 
 _app_interrupt
-	btfss	INTCON, TMR0IF
-	goto	usb_event_handler
-	bcf	INTCON, TMR0IF
-	banksel BLINK_COUNT
-	decfsz	BLINK_COUNT,F
-	goto	usb_event_handler
-	banksel LATC
-	movlw	0x04
-	xorwf	LATC,F  ; Invert 1 per second...
+	BANKSEL PIE1
+	btfss	PIE1,TXIE   ; Are we IRQ enabled 
+	goto	_dmx_irq_done
+	BANKSEL PIR1
+	btfss	PIR1,TXIF   ; Did the TXIF interrupt go off?
+	goto	_dmx_irq_done
+	bcf	PIR1,TXIF   ; 
+	call	DmxIrqHandler
+_dmx_irq_done
+	if USB_INTERRUPTS
+	else
 	return
+	endif
 
 usb_event_handler
 	banksel	UIR
@@ -208,6 +211,7 @@ _ucdc
 ;;; occurred while executing application code or bootloader code.
 ;;; (TOSH will be 0x00 when executing bootloader code, i.e. this snippet)
 bootloader_main_loop
+	bsf	INTCON,PEIE
 	bsf	INTCON,GIE	; enable interrupts (TMR interrupts)
 
 	BANKSEL LATA
@@ -215,15 +219,34 @@ bootloader_main_loop
 	bsf	LED_USB
 	bsf	LED_DMX
 _loop
-	call 	usb_event_handler ; Polling to check for USB events
-	if LOGGING_ENABLED
-; Print any pending characters in the log
-	call	log_service
+	if USB_INTERRUPTS
+	else
+	  call 	usb_event_handler ; Polling to check for USB events
 	endif
+
+	if LOGGING_ENABLED
+	; Print any pending characters in the log
+	  call	log_service
+	endif
+
+	call	DmxTransmit ; Polling check for DMX frame
 
 	BANKSEL BUTTON_PORT
 	btfss	BUTTON  ; Is the button pressed?
 	RESET
+
+	BANKSEL PIR1 ; BANK 0
+	btfss	PIR1,TMR1IF
+	goto	_main_no_t1_event
+	bcf	PIR1,TMR1IF
+	movlw	0xec
+	addwf	TMR1H,F
+	clrf	TMR1L
+
+	BANKSEL LATA
+	bcf	LED_USB
+	bcf	LED_DMX
+_main_no_t1_event
 	goto	_loop
 
 
@@ -404,7 +427,7 @@ _vloop	bsf	PMCON1,RD		; read word from flash
 
 ;;; Main function
 _app_main
-	banksel TRISA
+	banksel TRISA ; BANK 1
 	bcf 	LED_PWR_DIR
 	bcf 	LED_USB_DIR
 	bcf 	LED_DMX_DIR 
@@ -412,7 +435,7 @@ _app_main
         bcf	TRISC,4 ; EUSART - TX
 	bsf	TRISC,5 ; EUSART - RX 
 
-	banksel LATA
+	banksel LATA ; BANK 2
 	bcf	LED_PWR ; GREEN ; Turn OFF PWR LED
 	bcf	LED_DMX ; AMBER ; Turn ON DMX LED
 	bcf	LED_USB ; BLUE  ; Turn OFF USB LED
@@ -425,16 +448,15 @@ _app_main
 		logch	':',0
 	endif
 
-	; Setup a TMR0 - 255 cycles per second
-	banksel	OPTION_REG
-	movlw	0x07
-	movwf	OPTION_REG
-	banksel TMR0
-	movlw	72
-	movwf	TMR0
+	call	DmxSetup
 
-	bcf	INTCON, TMR0IF
-	bsf	INTCON, TMR0IE
+	BANKSEL ANSELA ; BANK 3
+	clrf	ANSELA
+
+	BANKSEL T1CON
+	; Initialize timer1
+	movlw	(1 << TMR1ON)
+	movwf	T1CON
 
 ; Print a power-on character
 	logch	'M',0
@@ -470,5 +492,7 @@ _usben
 	if LOGGING_ENABLED
 	include "log.asm"
 	endif
+
+	include "dmx.inc"
 
 	end
