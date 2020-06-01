@@ -75,7 +75,7 @@ BOOTLOADER_SIZE		equ	0x200
 ;;; Constants and varaiable addresses
 SERIAL_NUMBER_DIGIT_CNT	equ	4
 	ifndef SERIAL_NUMBER
-		variable SERIAL_NUMBER=0	; Why doesnt 'equ' work here? Go figure
+		variable SERIAL_NUMBER=42	; Why doesnt 'equ' work here? Go figure
 	endif
 
 #define BUTTON_PORT PORTA
@@ -104,15 +104,14 @@ USB_PRODUCT_ID         equ     0xEBC2
 
 ; Descriptor Lengths
 DEVICE_DESC_LEN		equ	18	; device descriptor length
-CONFIG_DESC_TOTAL_LEN	equ	67	; total length of configuration descriptor and sub-descriptors
+CONFIG_DESC_TOTAL_LEN	equ	32	; total length of configuration descriptor
 SERIAL_NUM_DESC_LEN	equ	2+(SERIAL_NUMBER_DIGIT_CNT*2)
-STRINGS_DESC_LEN	equ	33
+STRINGS_DESC_LEN	equ	0x3A
 ALL_DESCS_TOTAL_LEN	equ	DEVICE_DESC_LEN+CONFIG_DESC_TOTAL_LEN+SERIAL_NUM_DESC_LEN+STRINGS_DESC_LEN
 
-EP0_BUF_SIZE 		equ	8		; endpoint 0 buffer size
+EP0_BUF_SIZE 		equ	16	; endpoint 0 buffer size
 EP1_OUT_BUF_SIZE	equ	64		; endpoint 1 OUT (CDC data) buffer size
 EP1_IN_BUF_SIZE		equ	1		; endpoint 1 IN (CDC data) buffer size (only need 1 byte to return status codes)
-EP2_IN_BUF_SIZE		equ	1		; endpoint 2 IN (CDC data) buffer size
 
 ; Since we're only using 5 endpoints, use the 4 bytes normally occupied by the 
 ; EP2 OUT buffer descriptor for variables,and the BDT area for buffers.
@@ -121,8 +120,8 @@ EP0_DATA_IN_PTR		equ	BANKED_EP2OUT+1	; pointer to descriptor to be sent (low byt
 EP0_DATA_IN_COUNT	equ	BANKED_EP2OUT+2	; remaining bytes to be sent
 APP_POWER_CONFIG	equ	BANKED_EP2OUT+3	; application power config byte
 
-EP0OUT_BUF		equ	EP3OUT
-BANKED_EP0OUT_BUF	equ	BANKED_EP3OUT	; buffers go immediately after EP2 IN's buffer descriptor
+EP0OUT_BUF		equ	EP2IN
+BANKED_EP0OUT_BUF	equ	BANKED_EP2IN	; buffers go immediately after EP2 OUT's buffer descriptor
 EP0IN_BUF		equ	EP0OUT_BUF+EP0_BUF_SIZE
 BANKED_EP0IN_BUF	equ	BANKED_EP0OUT_BUF+EP0_BUF_SIZE
 
@@ -135,9 +134,6 @@ BANKED_EP1IN_BUF	equ	BANKED_EP0IN_BUF+EP0_BUF_SIZE+EXTRA_VARS_LEN
 
 EP1OUT_BUF		equ	EP1IN_BUF+EP1_IN_BUF_SIZE	; only use 1 byte for EP1 IN
 BANKED_EP1OUT_BUF	equ	BANKED_EP1IN_BUF+EP1_IN_BUF_SIZE
-
-EP2IN_BUF		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE	; only use 1 byte for EP2 IN
-BANKED_EP2IN_BUF	equ	BANKED_EP1OUT_BUF+EP1_OUT_BUF_SIZE
 
 ; High byte of all endpoint buffers.
 EPBUF_ADRH		equ	(EP0OUT_BUF>>8)
@@ -402,19 +398,13 @@ _device_descriptor
 _config_descriptor
 	movlw	low CONFIGURATION_DESCRIPTOR
 	movwf	EP0_DATA_IN_PTR
-	movlw	CONFIG_DESC_TOTAL_LEN	; length includes all subordinate descriptors
+	movlw	CONFIG_DESC_TOTAL_LEN	; length includes the sub-descriptors
 	goto	_set_data_in_count_from_w
 
 _string_descriptor
 ; Check wValueL for which string descriptor is requested
-	logch 	'Y',0
-	loghex 1,LOG_HEX|LOG_SPACE
 	movf    BANKED_EP0OUT_BUF+wValueL,w
-	logw
-	logch 	'X',LOG_SPACE
-
-	movf    BANKED_EP0OUT_BUF+wValueL,w
-	bz	_string_sd000
+	bz	_string_sd000  ;0x00
         decf	WREG,W	
 	bz	_string_mfg    ; 0x01
 	decf	WREG,W
@@ -422,28 +412,24 @@ _string_descriptor
 	goto	_string_serial ; Default to SerialNo.
 
 _string_mfg
-	logch	'3',0
 	movlw	low sd003
 	movwf	EP0_DATA_IN_PTR
-	movlw	0x0D
+	movlw	IMFG_SIZE
 	goto	_set_data_in_count_from_w
 
 _string_prod
-	logch	'2',0
 	movlw	low sd002
 	movwf	EP0_DATA_IN_PTR
-	movlw	0x10
+	movlw 	IPROD_SIZE	
 	goto	_set_data_in_count_from_w
 
 _string_serial
-	logch	'1',0
 	movlw	low SERIAL_NUMBER_STRING_DESCRIPTOR
 	movwf	EP0_DATA_IN_PTR
 	movlw	SERIAL_NUM_DESC_LEN
 	goto	_set_data_in_count_from_w
 
 _string_sd000
-	logch	'0',0
 	movlw 	low sd000
 	movwf	EP0_DATA_IN_PTR
 	movlw	0x04
@@ -552,32 +538,7 @@ _bcopy	sublw	EP0_BUF_SIZE		; have we filled the buffer?
 ; write back the updated source pointer
 _bcdone	movfw	FSR0L
 	movwf	EP0_DATA_IN_PTR
-; if we're sending the configuration descriptor, we need to inject the app's
-; values for bus power/self power and max current consumption
-_check_for_config_bmattributes
-	movlw	(LOW (CONFIGURATION_DESCRIPTOR+EP0_BUF_SIZE))
-	subwf	FSR0L,w
-	bnz	_check_for_config_bmaxpower
-; if we're sending the first 8 bytes of the configuration descriptor,
-; set bit 6 of bmAttributes if the application is self-powered
-	btfsc	APP_POWER_CONFIG,0
-	bsf	BANKED_EP0IN_BUF+7,6
 	return
-
-_check_for_config_bmaxpower
-	movlw	(LOW (CONFIGURATION_DESCRIPTOR+(EP0_BUF_SIZE*2)))
-	subwf	FSR0L,w
-	skpz
-	return
-
-; if we're sending the second 8 bytes of the configuration descriptor,
-; replace bMaxPower with the app's value
-	movfw	APP_POWER_CONFIG
-	bcf	WREG,0			; value is in the upper 7 bits
-	movwf	BANKED_EP0IN_BUF+0
-	return
-
-
 
 ;;; Initializes the buffers for the CDC endpoints (1 OUT, 1 IN, and 2 IN).
 ;;; arguments:	none
@@ -915,8 +876,8 @@ _initep
 	movwf	UEP0
 	movlw	(1<<EPHSHK)|(1<<EPCONDIS)|(1<<EPOUTEN)|(1<<EPINEN)
 	movwf	UEP1
-	movlw	(1<<EPHSHK)|(1<<EPCONDIS)|(1<<EPINEN)
-	movwf	UEP2
+	;movlw	(1<<EPHSHK)|(1<<EPCONDIS)|(1<<EPINEN)
+	;movwf	UEP2
 ; initialize endpoint buffers and counts
 	banksel	BANKED_EP0OUT_ADRL
 	movlw	low EP0OUT_BUF	; set endpoint 0 OUT address low
@@ -954,13 +915,13 @@ DEVICE_DESCRIPTOR
 	dt	DEVICE_DESC_LEN	; bLength
 	dt	0x01		; bDescriptorType
 	dt	0x00, 0x02	; bcdUSB (USB 2.0)
-	dt	0x02		; bDeviceClass (communication device)
+	dt	0x00		; bDeviceClass (custom device)
 	dt	0x00		; bDeviceSubclass
 	dt	0x00		; bDeviceProtocol
-	dt	0x08		; bMaxPacketSize0 (8 bytes)
-	dt	low USB_VENDOR_ID, high USB_VENDOR_ID	; idVendor
+	dt	EP0_BUF_SIZE	; bMaxPacketSize0 (8 bytes)
+	dt	low USB_VENDOR_ID,  high USB_VENDOR_ID	; idVendor
 	dt	low USB_PRODUCT_ID, high USB_PRODUCT_ID	; idProduct
-	dt	0x00, 0x01	; bcdDevice (1) 
+	dt	0x01, 0x00	; bcdDevice (1) 
 	dt	0x01		; iManufacturer
 	dt	0x02		; iProduct
 	dt	0x03		; iSerialNumber
@@ -970,11 +931,11 @@ CONFIGURATION_DESCRIPTOR
 	dt	0x09		; bLength
 	dt	0x02		; bDescriptorType
 	dt	CONFIG_DESC_TOTAL_LEN, 0x00	; wTotalLength
-	dt	0x02		; bNumInterfaces
+	dt	0x01		; bNumInterfaces
 	dt	0x01		; bConfigurationValue
 	dt	0x00		; iConfiguration
 	dt	0x80		; bmAttributes
-	dt	0x32		; bMaxPower ; LABRAT 50 vs 17?
+	dt	0x32		; bMaxPower 
 
 INTERFACE_DESCRIPTOR_0
 	dt	0x09		; bLength
@@ -983,75 +944,30 @@ INTERFACE_DESCRIPTOR_0
 CONFIGURATION_0_CONSTANT
 	dt	0x00		; bAlternateSetting
 CONFIGURATION_1_CONSTANT
-	dt	0x01		; bNumEndpoints
-	dt	0x02		; bInterfaceClass (communication)
-	dt	0x02		; bInterfaceSubclass (abstract control model)
-	dt	0x01		; bInterfaceProtocol (V.25ter, common AT commands)
+	dt	0x02		; bNumEndpoints
+	dt	0x00		; bInterfaceClass (communication)
+	dt	0x00		; bInterfaceSubclass (abstract control model)
+	dt	0x00		; bInterfaceProtocol (V.25ter, common AT commands)
 	dt	0x00		; iInterface
 
 	if (CONFIGURATION_0_CONSTANT>>8) != (CONFIGURATION_1_CONSTANT>>8)
 	error "CONSTANT_0 and CONSTANT_1 must be in the same 256-word region"
 	endif
 
-HEADER_FUNCTIONAL_DESCRIPTOR
-	dt	0x05		; bFunctionLength
-	dt	0x24		; bDescriptorType (CS_INTERFACE)
-	dt	0x00		; bDescriptorSubtype (header functional descriptor)
-	dt	0x10,0x01	; bcdCDC (specification version, 1.1)
-
-;ABSTRACT_CONTROL_MANAGEMENT_FUNCTIONAL_DESCRIPTOR
-	dt	0x04		; bFunctionLength
-	dt	0x24		; bDescriptorType (CS_INTERFACE)
-	dt	0x02		; bDescriptorSubtype (abstract control management functional descriptor)
-	dt	0x02		; bmCapabilities
-
-UNION_FUNCTIONAL_DESCRIPTOR
-	dt	0x05		; bFunctionLength
-	dt	0x24		; bDescriptorType (CS_INTERFACE)
-	dt	0x06		; bDescriptorSubtype (union functional descriptor)
-	dt	0x00		; bMasterInterface
-	dt	0x01		; bSlaveInterface0
-
-;CALL_MANAGEMENT_FUNCTIONAL_DESCRIPTOR
-	dt	0x05		; bFunctionLength
-	dt	0x24		; bDescriptorType (CS_INTERFACE)
-	dt	0x01		; bDescriptorSubtype (call management functional descriptor)
-	dt	0x00		; bmCapabilities (doesn't handle call management)
-	dt	0x01		; dDataInterface
-
-ENDPOINT_DESCRIPTOR_2_IN
+ENDPOINT_DESCRIPTOR_1_OUT
 	dt	0x07		; bLength
 	dt	0x05		; bDescriptorType (ENDPOINT)
-	dt	0x82		; bEndpointAddress (2 IN)
-	dt	0x03		; bmAttributes (transfer type: interrupt)
-	dt	0x08, 0x00	; wMaxPacketSize (8)
-	dt	0x02		; bInterval
-
-INTERFACE_DESCRIPTOR_1
-	dt	0x09		; bLength
-	dt	0x04		; bDescriptorType (INTERFACE)
-	dt	0x01		; bInterfaceNumber
-	dt	0x00		; bAlternateSetting
-	dt	0x02		; bNumEndpoints
-	dt	0x0a		; bInterfaceClass (data)
-	dt	0x00		; bInterfaceSubclass
-	dt	0x00		; bInterfaceProtocol
-	dt	0x00		; iInterface
+	dt	0x01		; bEndpointAddress (1 OUT)
+	dt	0x02		; bmAttributes (transfer type: bulk)
+	dt	low EP1_OUT_BUF_SIZE, 0x00	; wMaxPacketSize (64)
+	dt	0x00		; bInterval
 
 ENDPOINT_DESCRIPTOR_1_IN
 	dt	0x07		; bLength
 	dt	0x05		; bDescriptorType (ENDPOINT)
 	dt	0x81		; bEndpointAddress (1 IN)
 	dt	0x02		; bmAttributes (transfer type: bulk)
-	dt	0x40, 0x00	; wMaxPacketSize (64)
-	dt	0x00		; bInterval
-
-ENDPOINT_DESCRIPTOR_1_OUT
-	dt	0x07		; bLength
-	dt	0x05		; bDescriptorType (ENDPOINT)
-	dt	0x01		; bEndpointAddress (1 OUT)
-	dt	0x02		; bmAttributes (transfer type: bulk)
-	dt	0x40, 0x00	; wMaxPacketSize (64)
+	dt	low EP1_IN_BUF_SIZE, 0x00	; wMaxPacketSize (64)
 	dt	0x00		; bInterval
 
 ; extract nibbles from serial number
@@ -1076,15 +992,19 @@ sd000
 	dt	0x09, 0x04		; 
 
 ; Using String 1 for Manufactured String Index
+IMFG_SIZE 	equ	0x18
 sd003
-	dt	0x0D	; sizeof( SD003)
+	dt	IMFG_SIZE ; sizeof( SD003)
 	dt	0x03
-	dt	'L','a','b','r','a','t',' ','L','a','b','s'
+	dt	'L',0,'a',0,'b',0,'r',0,'a',0,'t',0,' ',0
+	dt	'L',0,'a',0,'b',0,'s',0
 
+IPROD_SIZE 	equ	0x1E
 sd002
-	dt 	0x10	; sizeof( SD002)
+	dt 	IPROD_SIZE ; sizeof( SD002)
 	dt	0x03
-	dt 	'Y','A','D','A','2',' ','(','C',')',' ','2','0','2','0'
+	dt 	'Y',0,'A',0,'D',0,'A',0,'2',0,' ',0,'(',0,'C',0,')',0,' ',0
+	dt	'2',0,'0',0,'2',0,'0',0
 
 
 ; Raise an error if the descriptors aren't properly aligned. (This means you
