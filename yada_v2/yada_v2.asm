@@ -567,27 +567,26 @@ arm_ep1_in
 ;;; clobbers:	W, FSR0, FSR1
 usb_service_cdc
 	movlw	(1<<DTS)
-	btfsc	FSR1H,ENDP1				; ignore endpoint 2
+	btfsc	FSR1H,ENDP1		; ignore endpoint 2
 	return
-	btfsc	FSR1H,DIR				; if endpoint 1 IN, rearm buffer
+	btfsc	FSR1H,DIR		; if endpoint 1 IN, rearm buffer
 	goto	arm_ep1_in
-	movf	BANKED_EP1OUT_CNT,f		; test for a zero-length packet
-	bz		arm_ep1_out				; (just ignore them and rearm the OUT buffer)
-	logch	'>',0
-	bcf		BANKED_EP1IN_STAT,UOWN
-	call	bootloader_exec_cmd		; execute command; status returned in W
+	movf	BANKED_EP1OUT_CNT,f	; test for a zero-length packet
+	bz	arm_ep1_out		; (just ignore them and rearm the OUT buffer)
+	bcf	BANKED_EP1IN_STAT,UOWN
+	call	bootloader_exec_cmd	; execute command; status returned in W
 	banksel	BANKED_EP1IN_BUF
-	movwf	BANKED_EP1IN_BUF		; copy status to IN buffer
+	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
 	movlw	1
-	movwf	BANKED_EP1IN_CNT		; output byte count is 1
-	bsf		BANKED_EP1IN_STAT,UOWN
+	movwf	BANKED_EP1IN_CNT	; output byte count is 1
+	bsf	BANKED_EP1IN_STAT,UOWN
 	; fall through to arm_ep1_out
 
 arm_ep1_out
 	movlw	EP1_OUT_BUF_SIZE		; set CNT
 	movwf	BANKED_EP1OUT_CNT
 	clrf	BANKED_EP1OUT_STAT		; ignore data toggle
-	bsf		BANKED_EP1OUT_STAT,UOWN	; rearm OUT buffer
+	bsf	BANKED_EP1OUT_STAT,UOWN	; rearm OUT buffer
 	return
 
 
@@ -598,8 +597,11 @@ arm_ep1_out
 ;;; returns:	status code in W
 ;;; clobbers:	W, BSR, FSR0, FSR1
 bootloader_exec_cmd
-	logch	'B',0
 ; check length of data packet
+	movlw	0x22
+	subwf	BANKED_EP1OUT_CNT,W
+	bz	_dmx_packet
+	logch	'>',0
 	movlw	BCMD_SET_PARAMS_LEN
 	subwf	BANKED_EP1OUT_CNT,w
 	bz	_bootloader_set_params
@@ -611,9 +613,13 @@ bootloader_exec_cmd
 	bz	_bootloader_reset
 	retlw	BSTAT_INVALID_COMMAND
 
+_dmx_packet
+	logch	'D',0
+	retlw	BSTAT_OK
+
 ; Resets the device if the received byte matches the reset character.
 _bootloader_reset
-	logch	'r',0
+	logch	'R',0
 	movlw	BCMD_RESET_CHAR
 	subwf	BANKED_EP1OUT_BUF,w	; check received character
 	skpz
@@ -781,7 +787,7 @@ _app_main
 
 ; Attach to the bus (could be a subroutine, but inlining it saves 2 instructions)
 _usb_attach
-	logch	'B',0
+	logch	'A',0
 	banksel	UCON		; reset UCON
 	clrf	UCON
 	if USB_INTERRUPTS
