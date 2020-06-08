@@ -623,7 +623,7 @@ _dmx_packet
 	movlw	low DmxUniverse
 	movwf	FSR0L
 	banksel BANKED_EP1OUT_BUF+1   ; If DMX & 1st packet of frame..
-	movf	BANKED_EP1OUT_BUF+1,F ;    Jump to dmx_led_cnt
+	movf	BANKED_EP1OUT_BUF+1,W ;    Jump to dmx_led_cnt
 	bz	_dmx_led_cnt
 _dmx_skip_loop
 	addfsr	FSR0, 16	; Multiplication/Addition loop (32 x # )
@@ -636,10 +636,12 @@ _dmx_copy_payload
 	movlw	high EP1OUT_BUF
 	movwf	FSR1H
 	movlw	0x20
+	; SNEAKY - use BANKED_EP1_OUT_BUF[0] (formerly 0x40) as a temp counter
+	movwf	BANKED_EP1OUT_BUF
 _dmx_copy_loop
 	moviw	FSR1++
 	movwi	FSR0++
-	decfsz	WREG,W
+	decfsz	BANKED_EP1OUT_BUF,F
 	goto	_dmx_copy_loop
 	retlw	BSTAT_OK
 
