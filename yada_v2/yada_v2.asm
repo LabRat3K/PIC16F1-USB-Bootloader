@@ -50,7 +50,7 @@
 ; With logging enabled, the bootloader will not fit in 512 words.
 ; Use this only for debugging!
 ; For more info, see log_macros.inc and log.asm.
-LOGGING_ENABLED		equ 1
+LOGGING_ENABLED		equ 0
 USE_BOOTLOADER_CDC 	equ 0 
 USB_INTERRUPTS          equ 1
 
@@ -89,7 +89,7 @@ SERIAL_NUMBER_DIGIT_CNT	equ	4
 #define LED_USB_DIR TRISC,3
 #define LED_DMX_DIR TRISC,2
 
-#define CODE_SIZE  ( 0x1F80 )
+#define MAX_CODE_SIZE  ( 0x1F80 )
 #define HIGH_AVAIL_FLASH ( 0x1F80 ) ; TBD
 
 ; I plan to apply for an Openmoko Product ID: the current product ID is temporary.
@@ -132,8 +132,8 @@ EXPECTED_CHECKSUM	equ	BANKED_EP0IN_BUF+EP0_BUF_SIZE	; for saving expected checks
 EP1IN_BUF		equ	EP0IN_BUF+EP0_BUF_SIZE+EXTRA_VARS_LEN
 BANKED_EP1IN_BUF	equ	BANKED_EP0IN_BUF+EP0_BUF_SIZE+EXTRA_VARS_LEN
 
-EP1OUT_BUF		equ	EP1IN_BUF+EP1_IN_BUF_SIZE	; only use 1 byte for EP1 IN
-BANKED_EP1OUT_BUF	equ	BANKED_EP1IN_BUF+EP1_IN_BUF_SIZE
+EP1OUT_BUF		equ	0x2050 	;EP1IN_BUF+EP1_IN_BUF_SIZE	; only use 1 byte for EP1 IN
+BANKED_EP1OUT_BUF	equ	0xA0	;BANKED_EP1IN_BUF+EP1_IN_BUF_SIZE
 
 ; High byte of all endpoint buffers.
 EPBUF_ADRH		equ	(EP0OUT_BUF>>8)
@@ -143,6 +143,8 @@ EPBUF_ADRH		equ	(EP0OUT_BUF>>8)
 
 ; Total length of all RAM (variables, buffers, BDT entries) used by the bootloader,
 USED_RAM_LEN		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE-BDT_START
+
+LED_COUNT_USB		equ 	BANKED_EP1OUT_BUF+ EP1_OUT_BUF_SIZE+2
 DmxUniverse		equ	0x2200
 
 ; USB_STATE bit flags
@@ -176,11 +178,13 @@ _app_interrupt
         BANKSEL PIE1
         btfss   PIE1,TXIE   ; Are we IRQ enabled 
         goto    _dmx_irq_done
+
         BANKSEL PIR1
         btfss   PIR1,TXIF   ; Did the TXIF interrupt go off?
         goto    _dmx_irq_done
-        bcf     PIR1,TXIF   ; 
-        ;call    DmxIrqHandler
+
+	pagesel	DmxIrqHandler
+        call	DmxIrqHandler
         pagesel _app_interrupt
 _dmx_irq_done
 	if USB_INTERRUPTS
@@ -221,7 +225,7 @@ _utrans
 _usdone
         banksel PIR2
         bcf     PIR2,USBIF
-        return                  ; Bootloader frames calls this as standar CALL (!retfie)
+        return                  ; Bootloader frames calls this as standard CALL (!retfie)
 _ucdc
         call    usb_service_cdc ; USTAT value is still in FSR1H
         goto    _utrans
@@ -233,16 +237,17 @@ _ucdc
 ;;; memory, so we can easily check in the interrupt handler if the interrupt
 ;;; occurred while executing application code or bootloader code.
 ;;; (TOSH will be 0x00 when executing bootloader code, i.e. this snippet)
-bootloader_main_loop
+main_loop
 	bsf	INTCON,PEIE
 	bsf	INTCON,GIE	; enable interrupts
 
 	BANKSEL LATA
-	bcf	LED_PWR ; GREEN only
-	bsf	LED_USB
-	bsf	LED_DMX
+	bcf	LED_PWR ; PWR LED ON 
+	bsf	LED_USB ; USB LED OFF
+	bsf	LED_DMX ; DMX LED OFF
 
 _loop
+	CLRWDT
 	if USB_INTERRUPTS
 	else
 	  call	usb_event_handler ; Polling to check forUSB events
@@ -253,12 +258,15 @@ _loop
 	  call	log_service
 	endif
 
-  ;     call    DmxTransmit ; Polling check for DMX frame
+	pagesel	DmxTransmit
+        call	DmxTransmit ; Polling check for DMX frame
+	pagesel $
 
         BANKSEL BUTTON_PORT
         btfss   BUTTON  ; Is the button pressed?
 	goto	_handle_reset
 
+#ifdef REMOVE
         BANKSEL PIR1 ; BANK 0
         btfss   PIR1,TMR1IF
         goto    _main_no_t1_event
@@ -268,18 +276,15 @@ _loop
         addwf   TMR1H,F
         clrf    TMR1L
 
-        BANKSEL LATA
-        bcf     LED_USB
-        ;bcf     LED_DMX
-
 _main_no_t1_event
-
+#endif
 	goto	_loop
 
 _handle_reset
+	BANKSEL LATA
 	bsf	LED_USB
-	bsf	LED_PWR
-	bcf	LED_DMX
+	bcf	LED_PWR
+	bsf	LED_DMX
         RESET
 
 
@@ -598,10 +603,9 @@ arm_ep1_out
 ;;; clobbers:	W, BSR, FSR0, FSR1
 bootloader_exec_cmd
 ; check length of data packet
-	movlw	0x22
+	movlw	0x22   ; Length of the DMX packet
 	subwf	BANKED_EP1OUT_CNT,W
 	bz	_dmx_packet
-	logch	'>',0
 	movlw	BCMD_SET_PARAMS_LEN
 	subwf	BANKED_EP1OUT_CNT,w
 	bz	_bootloader_set_params
@@ -614,12 +618,45 @@ bootloader_exec_cmd
 	retlw	BSTAT_INVALID_COMMAND
 
 _dmx_packet
-	logch	'D',0
+	movlw	high DmxUniverse
+	movwf	FSR0H
+	movlw	low DmxUniverse
+	movwf	FSR0L
+	banksel BANKED_EP1OUT_BUF+1   ; If DMX & 1st packet of frame..
+	movf	BANKED_EP1OUT_BUF+1,F ;    Jump to dmx_led_cnt
+	bz	_dmx_led_cnt
+_dmx_skip_loop
+	addfsr	FSR0, 16	; Multiplication/Addition loop (32 x # )
+	addfsr	FSR0, 16
+	decfsz	WREG,W
+	goto	_dmx_skip_loop
+_dmx_copy_payload
+	movlw	low EP1OUT_BUF+2
+	movwf	FSR1L
+	movlw	high EP1OUT_BUF
+	movwf	FSR1H
+	movlw	0x20
+_dmx_copy_loop
+	moviw	FSR1++
+	movwi	FSR0++
+	decfsz	WREG,W
+	goto	_dmx_copy_loop
 	retlw	BSTAT_OK
+
+_dmx_led_cnt
+	banksel LED_COUNT_USB
+	decfsz	LED_COUNT_USB,F
+	goto	_dmx_copy_payload
+	movlw	44
+	movwf	LED_COUNT_USB
+	movlw	0x08  ; USB_LED
+	banksel	LATC
+	xorwf	LATC,F
+	banksel BANKED_EP1OUT_BUF
+	goto	_dmx_copy_payload
 
 ; Resets the device if the received byte matches the reset character.
 _bootloader_reset
-	logch	'R',0
 	movlw	BCMD_RESET_CHAR
 	subwf	BANKED_EP1OUT_BUF,w	; check received character
 	skpz
@@ -632,7 +669,6 @@ _bootloader_reset
 ; the "erase" character.
 ; BSR=0
 _bootloader_set_params
-	logch	'S',0
 	movfw	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_CKSUM	; expected checksum
 	movwf	EXPECTED_CHECKSUM			; save for verification during write command
 	movfw	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ERASE
@@ -653,7 +689,6 @@ _bootloader_set_params
 ; Erases the row of flash in PMADRH:PMADRL.
 ; BSR=3
 _bootloader_erase
-	logch	'E',0
 	movlw	(1<<FREE)|(1<<WREN)	; enable write and erase to program memory
 	movwf	PMCON1
 	call	flash_unlock		; stalls until erase finishes
@@ -757,9 +792,13 @@ _app_main
         bsf     TRISC,5 ; EUSART - RX 
 
         banksel LATA ; BANK 2
-        bcf     LED_PWR ; GREEN ; Turn OFF PWR LED
-        bcf     LED_DMX ; AMBER ; Turn ON DMX LED
-        bcf     LED_USB ; BLUE  ; Turn OFF USB LED
+        bcf     LED_PWR ; GREEN ; Turn ON  PWR LED
+        bsf     LED_DMX ; AMBER ; Turn OFF DMX LED
+        bsf     LED_USB ; BLUE  ; Turn OFF USB LED
+
+	banksel LED_COUNT_USB
+	movlw	44
+	movwf	LED_COUNT_USB
 
 	if LOGGING_ENABLED
 		call	uart_init
@@ -768,21 +807,22 @@ _app_main
 		logch	'^',LOG_NEWLINE
 	endif
 
-        ;call    DmxSetup
-
         BANKSEL ANSELA ; BANK 3
         clrf    ANSELA
 
+#ifdef REMOVE
         BANKSEL T1CON
         ; Initialize timer1
         movlw   (1 << TMR1ON)
         movwf   T1CON
+#endif
 
 ; Print a power-on character
         logch   'M',0
 
 ; Initialize USB
 	lcall	usb_init ;(on return BSR=UNKNOWN)
+
 	pagesel	_app_main
 
 ; Attach to the bus (could be a subroutine, but inlining it saves 2 instructions)
@@ -805,7 +845,11 @@ _usben
 ; Enable interrupts and enter an idle loop
 ; (Loop code is located at the top of the file, in the first 256 words of
 ; program memory)
-	goto	bootloader_main_loop
+	pagesel	DmxSetup
+        call    DmxSetup
+	pagesel $
+
+	goto	main_loop
 
 
 ;;; Gets the application's power config byte and stores it in APP_POWER_CONFIG.
@@ -824,7 +868,7 @@ get_app_power_config
 ;;; returns:	none
 ;;; clobbers:	W, BSR, FSR0, FSR1H
 usb_init
-	logch	'R',LOG_NEWLINE
+	logch	'L',LOG_NEWLINE
 ; disable USB interrupts
 	banksel	PIE2
 	bcf	PIE2,USBIE
@@ -915,7 +959,7 @@ _initep
 ; This serves 2 purposes: 1) as long as the total length of all descriptors is
 ; less than 256, we can address them with an 8-bit pointer,
 ; and 2) the assembler will raise an error if space is exhausted.
-	org	CODE_SIZE-ALL_DESCS_TOTAL_LEN
+	org	MAX_CODE_SIZE-ALL_DESCS_TOTAL_LEN
 DESCRIPTOR_ADRH	equ	high $
 DEVICE_DESCRIPTOR
 	dt	DEVICE_DESC_LEN	; bLength
@@ -1015,7 +1059,7 @@ sd002
 
 ; Raise an error if the descriptors aren't properly aligned. (This means you
 ; changed the descriptors without updating the definition of ALL_DESCS_TOTAL_LEN.)
-	if $!=CODE_SIZE
+	if $!=MAX_CODE_SIZE
 	error "Descriptors must be aligned with the end of the bootloader region"
 	endif
 

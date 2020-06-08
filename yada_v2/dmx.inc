@@ -43,12 +43,6 @@
 ;
 ;
 
-movff	macro x,y 
-	movf	x,f
-	movwf	y
-	endm	
-
-
 #ifdef STANDALONE
 	radix dec
 	list n=0,st=off
@@ -63,14 +57,12 @@ movff	macro x,y
 
 ; Timing constants (assuming 48MHz clock input and assigned prescaler  
 ; values to produce 1us tick) Uses 1:8 pre-scalar
-#define T0CON_PRESCALAR 0xC2
+#define T0CON_PRESCALAR 0x82
 #define T100US	.106        ; preload value for TMR0 to roll over in 100us 
 #define T30US 	.211        ; 30us value
 
 #define DMX_BREAK_PIN 	LATA,5
 #define DMX_BREAK_DIR	TRISA,5
-#define DMX_LED 	LATC,2
-
 
 ; Variables memory allocation  
 ;;dmxdata UDATA
@@ -80,6 +72,7 @@ movff	macro x,y
 	CountL			; 16-bit counter
 	FSR0_DMXL		; Save Context outside of IRQ Handler
 	FSR0_DMXH		;
+	DMX_BLINK		; 44 packets per second
 	end_bank0_minor_vars:0
  ENDC
  if end_bank0_minor_vars > 0x80
@@ -88,12 +81,6 @@ movff	macro x,y
 
 ;DmxUniverse equ 0x2200 ; 512 bytes of DMX Universe Values
 
-
-;**************************************************************************************** 
-DmxSetup: 
-	call	SetupSerial		    ; initialize serial comm  
-	call	InitTX			    ; initialize the I/O ports and TMR0 
- 	return
 ;**************************************************************************************** 
 ;DMX Transmit state machine  
  
@@ -102,13 +89,12 @@ DmxTransmit:
 	; events.  Just return if a roll-over has not occured. 
 	btfss	INTCON,TMR0IF	; wait until TIMER0 roll-over 
 	return
+
 	bcf	INTCON,TMR0IF	; clear the flag
-	movf	DmxTxState,W
 	movlw 	high(JumpTable)
 	movwf 	PCLATH
-	rlf	DmxTxState,W	; state x2 to account for PC byte  
-				; addressing 
-	andlw	0x0E		; reduce offset to valid range (0-14) 
+	movf	DmxTxState,W
+	andlw	0x07		; reduce offset to valid range (0-14) 
 	addwf	PCL,F		; computed jump  
  
 JumpTable:
@@ -125,10 +111,23 @@ JumpTable:
 SENDBREAK
 	BANKSEL TRISA ; BANK 1
 	bsf     DMX_BREAK_DIR  	; tri-state the BREAK to end the break signal
+
 	BANKSEL TMR0  ; BANK 0
 	movlw	T30US          	; start timer for MARK AFTER BREAK
-	movwf	TMR0			 
+	movwf	TMR0
+
 	decf	DmxTxState,F	; proceed to State2 SENDMAB 
+ ; BLINK routine
+	decfsz  DMX_BLINK,F
+	return
+
+	movlw	44		; Every 44 packets.. should toggle 1HZ (ish)
+	movwf	DMX_BLINK
+
+	movlw	0x04
+	BANKSEL LATC 		; BANK 2
+	xorwf	LATC,F			; Turn on DMX LED,F
+
 	return 
  
 ; DmxTxState = 2. Mark After Break (line IDLE for 100uSec) send a start code 
@@ -136,35 +135,43 @@ SENDMAB
 	clrf	CountL			; init 16-bit counter		 
 	clrf	CountH 
 	movlw	low DmxUniverse	; init pointer to transmit buffer
-	movwf	FSR0L
 	movwf	FSR0_DMXL
 	movlw	high DmxUniverse
-	movwf	FSR0H
 	movwf	FSR0_DMXH	
-	bcf	INTCON, TMR0IE 		; disable the timer (for now)
+	decf	DmxTxState,f	; proceed to State1  SENDDATA
+
 	BANKSEL TXREG ; BANK 3
-	clrf    TXREG          		; send NULL START CODE 
+	movlw 'S'
+	movwf TXREG
+
+	;clrf    TXREG          		; send NULL START CODE 
+
 	BANKSEL PIE1  ; BANK 1
 	bsf	PIE1,TXIE		; Enable UART TX interrupt
-	clrf    DmxTxState
+
+
 	return 
  
 ; DmxTxState = 1. wait for UART to complete transmission of current byte and an 
 ; additional short amount of time 
 SENDDATA 
-	return 
+	return 				; Do nothing, the IRQ handler will push state transition
  
 ;DmxTxState = 0. sends Mark Before repeating the frame transmission 
 SENDMBB
+	BANKSEL TMR0  ; BANK 0
 	movlw	T100US			; pre-load the timer for 100us BREAK 
 	movwf	TMR0			 
 	bcf	INTCON,TMR0IF		; clear the flag 
+
 	BANKSEL TRISA ; BANK 1
 	bcf     DMX_BREAK_DIR		; make RB0 an output
+
 	BANKSEL LATA  ; BANK 2
 	bcf     DMX_BREAK_PIN		; pull pin RB0 low to force a break condition
 	movlw	.3			; proceed to State3 SENDBREAK 
 	movwf	DmxTxState
+
 	return 
  
  ;**************************************************************************************** 
@@ -175,27 +182,35 @@ DmxIrqHandler
 	
 	; Increase the count - we test for range on next TX irq
 	incf	CountL,F
-	btfsc	STATUS,C
+	btfsc	STATUS,Z  ; When ZERO increment the H order byte
 	incf	CountH,F
-	movff   FSR0_DMXL, FSR0L
-	movff   FSR0_DMXH, FSR0H
-	moviw	FSR0++
+
+	movf	FSR0_DMXL,W 	; Load the indirect access pointer(FSR0)
+	movwf	FSR0L
+	movf	FSR0_DMXH,W
+	movwf	FSR0H
+
+	moviw	FSR0++		; Copy the data, and increment the FSR0 index
 	BANKSEL TXREG ;  BANK 3
-	movwf	TXREG
-	movff   FSR0L, FSR0_DMXL
-	movff   FSR0H, FSR0_DMXH
-	BANKSEL LATA ; BANK 2
-	bcf	DMX_LED			; Turn on DMX LED
+	movwf	TXREG		; Write the value to the UART engine
+
+	movf	FSR0L,W		; Save the modified FSR0 index, for the next 
+	movwf	FSR0_DMXL	; time in this IRQ/LOOP
+	movf	FSR0H,W
+	movwf	FSR0_DMXH
 	; return from IRQ
 	return
 
 DIH_TxDone
 	BANKSEL PIE1 ; BANK 1
 	bcf	PIE1, TXIE 		; Disable the interrupts
-	BANKSEL TMR0 ; BANK 0
+
+	BANKSEL TMR0 ; BANK 0 		; Start the MARK B4 BREAK timer
 	movlw	T100US
 	movwf	TMR0
-	bsf	INTCON, TMR0IE
+
+	clrf	DmxTxState		; proceed to State0 - SENDMBB
+	bcf 	INTCON,TMR0IF		; Clear any pending TMR0 event
 	; return from IRQ
 	return
 
@@ -218,9 +233,19 @@ SetupSerial
  	bsf	BAUDCON,BRGH	;
 	movlw	.47		; init baud rate generator for 250k baud (assume Fosc=48MHz)
 	movwf	SPBRGL		 
-	 
+	
+	; Setup for BLINKING at 1HZ (44 BREAKS per second) 
+	movlw	44
+	movwf	DMX_BLINK
 	return 
 	 
+
+;**************************************************************************************** 
+DmxSetup 
+	call	SetupSerial	; initialize serial comm  
+	call	InitTX		; initialize the I/O ports and TMR0 
+ 	return
+
 ;**************************************************************************************** 
 ;InitTX		init Timer0, clear TXbuffer, init state machine 
  
@@ -231,15 +256,16 @@ InitTX
 ; clear Transmit buffer
 	movlw	low DmxUniverse	; use IND0 pointer to address the RAM buffer 
 	movwf	FSR0L
-	movwf	FSR0_DMXL
+	movwf	FSR0_DMXL	; store copy of the pointer for when we need to SEND the payload
 	movlw	high DmxUniverse
 	movwf	FSR0H
 	movwf	FSR0_DMXH	
-	movlw	0x00
+
+	movlw	0x30		; DEBUG value.. set at 0x00 for initialization
 CBloop 
 	movwi	FSR0++		; clear the location pointed to by IND0 then increment pointer 
-	incf	CountL,F	; increment 16-bit counter 
-	btfss	STATUS,C 
+
+	incfsz	CountL,F	; increment 16-bit counter 
 	bra	CBloop
 	incf	CountH,F 
 	btfss	CountH,1	; check if counter >= 512 
@@ -249,6 +275,8 @@ CBloop
 	BANKSEL OPTION_REG ; BANK 1
 	movlw	T0CON_PRESCALAR ; enable Timer0, as an 8-bit timer, use prescaler 1:2 
 	movwf	OPTION_REG	; (0.4us tick@20MHz) 
+
+	BANKSEL TRISA
 	bcf	DMX_BREAK_DIR	; make pin RB0 an output
 
 	BANKSEL LATA ; BANK 2
