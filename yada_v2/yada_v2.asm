@@ -47,10 +47,6 @@
 ;   (0x8000-8003) is not supported at this time, and writing the configuration
 ;   words is not possible via self-programming.
 
-; With logging enabled, the bootloader will not fit in 512 words.
-; Use this only for debugging!
-; For more info, see log_macros.inc and log.asm.
-LOGGING_ENABLED		equ 0
 USE_BOOTLOADER_CDC 	equ 0 
 USB_INTERRUPTS          equ 1
 
@@ -66,7 +62,6 @@ BOOTLOADER_SIZE		equ	0x200
 	include "bdt.inc"
 	include "usb.inc"
 	include "protocol_constants.inc"
-	include "log_macros.inc"
 	include "import_list.inc"
 	list
 	errorlevel -302
@@ -258,11 +253,6 @@ _loop
 	if USB_INTERRUPTS
 	else
 	  call	usb_event_handler ; Polling to check forUSB events
-	endif
-
-	if LOGGING_ENABLED
-; Print any pending characters in the log
-	  call	log_service
 	endif
 
 	pagesel	DmxTransmit
@@ -797,18 +787,8 @@ _app_main
 	movlw	44
 	movwf	LED_COUNT_USB
 
-	if LOGGING_ENABLED
-		call	uart_init
-		call	log_init
-		; Print a power-on character
-		logch	'^',LOG_NEWLINE
-	endif
-
         BANKSEL ANSELA ; BANK 3
         clrf    ANSELA
-
-; Print a power-on character
-        logch   'M',0
 
 ; Initialize USB
 	lcall	usb_init ;(on return BSR=UNKNOWN)
@@ -817,7 +797,6 @@ _app_main
 
 ; Attach to the bus (could be a subroutine, but inlining it saves 2 instructions)
 _usb_attach
-	logch	'A',0
 	banksel	UCON		; reset UCON
 	clrf	UCON
 	if USB_INTERRUPTS
@@ -830,7 +809,6 @@ _usben
 	bsf	UCON,USBEN	; enable USB module and wait until ready
 	btfss	UCON,USBEN
 	goto	_usben
-	logch	'!',LOG_NEWLINE
 
 ; Enable interrupts and enter an idle loop
 ; (Loop code is located at the top of the file, in the first 256 words of
@@ -858,7 +836,6 @@ get_app_power_config
 ;;; returns:	none
 ;;; clobbers:	W, BSR, FSR0, FSR1H
 usb_init
-	logch	'L',LOG_NEWLINE
 ; disable USB interrupts
 	banksel	PIE2
 	bcf	PIE2,USBIE
@@ -936,10 +913,6 @@ _initep
 	goto	arm_ep0_out
 
 ;;; Includes
-	if LOGGING_ENABLED
-	include "log.asm"
-	endif
-
 	include "dmx.inc"
 
 
