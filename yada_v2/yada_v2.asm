@@ -193,6 +193,13 @@ _dmx_irq_done
 	endif
 
 usb_event_handler
+	if USB_INTERRUPTS
+	BANKSEL PIR2
+        btfss	PIR2,USBIF
+	return
+	else
+	endif
+
         banksel UIR
 ; USB reset?
         btfss   UIR,URSTIF
