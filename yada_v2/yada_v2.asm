@@ -266,18 +266,6 @@ _loop
         btfss   BUTTON  ; Is the button pressed?
 	goto	_handle_reset
 
-#ifdef REMOVE
-        BANKSEL PIR1 ; BANK 0
-        btfss   PIR1,TMR1IF
-        goto    _main_no_t1_event
-        bcf     PIR1,TMR1IF
-
-        movlw   0xec
-        addwf   TMR1H,F
-        clrf    TMR1L
-
-_main_no_t1_event
-#endif
 	goto	_loop
 
 _handle_reset
@@ -811,13 +799,6 @@ _app_main
 
         BANKSEL ANSELA ; BANK 3
         clrf    ANSELA
-
-#ifdef REMOVE
-        BANKSEL T1CON
-        ; Initialize timer1
-        movlw   (1 << TMR1ON)
-        movwf   T1CON
-#endif
 
 ; Print a power-on character
         logch   'M',0

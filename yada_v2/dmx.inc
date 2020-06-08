@@ -141,10 +141,8 @@ SENDMAB
 	decf	DmxTxState,f	; proceed to State1  SENDDATA
 
 	BANKSEL TXREG ; BANK 3
-	movlw 'S'
-	movwf TXREG
 
-	;clrf    TXREG          		; send NULL START CODE 
+	clrf    TXREG          		; send NULL START CODE 
 
 	BANKSEL PIE1  ; BANK 1
 	bsf	PIE1,TXIE		; Enable UART TX interrupt
