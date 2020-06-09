@@ -105,8 +105,8 @@ STRINGS_DESC_LEN	equ	0x3A
 ALL_DESCS_TOTAL_LEN	equ	DEVICE_DESC_LEN+CONFIG_DESC_TOTAL_LEN+SERIAL_NUM_DESC_LEN+STRINGS_DESC_LEN
 
 EP0_BUF_SIZE 		equ	16	; endpoint 0 buffer size
-EP1_OUT_BUF_SIZE	equ	64		; endpoint 1 OUT (CDC data) buffer size
-EP1_IN_BUF_SIZE		equ	1		; endpoint 1 IN (CDC data) buffer size (only need 1 byte to return status codes)
+EP1_OUT_BUF_SIZE	equ	64	; endpoint 1 OUT (CDC data) buffer size
+EP1_IN_BUF_SIZE		equ	16	; endpoint 1 IN (CDC data) buffer size 
 
 ; Since we're only using 5 endpoints, use the 4 bytes normally occupied by the 
 ; EP2 OUT buffer descriptor for variables,and the BDT area for buffers.
@@ -564,7 +564,7 @@ usb_service_cdc
 	movf	BANKED_EP1OUT_CNT,f	; test for a zero-length packet
 	bz	arm_ep1_out		; (just ignore them and rearm the OUT buffer)
 	bcf	BANKED_EP1IN_STAT,UOWN
-	call	bootloader_exec_cmd	; execute command; status returned in W
+	call	_yada_cmd		; execute command; status returned in W
 	banksel	BANKED_EP1IN_BUF
 	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
 	movlw	1
@@ -579,29 +579,119 @@ arm_ep1_out
 	bsf	BANKED_EP1OUT_STAT,UOWN	; rearm OUT buffer
 	return
 
-
-
 ;;; Executes a bootloader command.
 ;;; arguments:	command payload in EP1 OUT buffer
 ;;; 		BSR=0
 ;;; returns:	status code in W
 ;;; clobbers:	W, BSR, FSR0, FSR1
-bootloader_exec_cmd
-; check length of data packet
+; A New Paradigm
+;  BANKED_EP1OUT_BUFF[0]
+;	0 - DMX data - if MODE = 0, apply to DmxUniverse
+;	    Note: Fixed payload length - 32 bytes + 2 byte overhead
+;           Reply: None - keep the bandwidth clear.
+;	1 - Passthrough Data - if MODE =1 & Buffer Available - copy data 
+;           Note: Variabe length data payload (1 to 63)
+;           Reply <C1> - ACK
+;	2 - Admin : <00> - Set Mode DMX : <SOF-Byte> 
+;                          Reply <C2> <00> <00/01> - ACK/NACK
+;	            <01> - Set Mode PassThrough : <SOF-Byte> 
+;                          Reply <C2> <01> <00/01> - ACK/NACK
+;                   <02> - Query Device <MAJ>.<MIN>, <DevIdH><DevIdL>
+;                          Reply <C2> <02> <MAJ>.<MIN>, <DevIdH><DevIdL>
+;                   <03> - Query Serial No.
+;                          Reply <C2> <03> <MAJ>.<MIN>, <DevIdH><DevIdL>
+;	            <04> - <B1><B2><B3><B4><CSUM> : Write DeviceInfo
+;                          Reply <C2> <04> <00/01> - ACK/NACK
+;	            <05> - <B1><B2><B3><B4><CSUM> : Write SerialNo.
+;                          Reply <C2> <05> <00/01> - ACK/NACK
+;       3- Reset Device
+;
+_yada_cmd
+	banksel BANKED_EP1OUT_BUF	; Is DMX frame?
+	movlw	0x40
+	subwf	BANKED_EP1OUT_BUF,W
+	bz	_dmx_packet
+
+	movlw	0x41			; Is PASSTHROUGH frame?
+	subwf	BANKED_EP1OUT_BUF,W
+	bz	_pass_through_packet
+	
+	movlw	0x42			; Is ADMIN frame?
+	subwf	BANKED_EP1OUT_BUF,W
+	bz	_admin_packet
+	
+	movlw	0x43			; Is Reset Request?
+	subwf	BANKED_EP1OUT_BUF,W
+	bz	_bootloader_reset
+
+	retlw	BSTAT_INVALID_COMMAND
+
+_admin_packet
+	movf	BANKED_EP1OUT_BUF+1,F	; Set Mode to DMX?
+	bz	_admin_set_dmx
+
+	movlw	0x01
+	subwf	BANKED_EP1OUT_BUF+1,W	; Set Mode to Passthrough?
+	bz	_admin_set_passthrough
+
+	movlw	0x02
+	subwf	BANKED_EP1OUT_BUF+1,W	; Qry Device INFO
+	bz	_admin_qry_device
+
+	movlw	0x03
+	subwf	BANKED_EP1OUT_BUF+1,W	; Qry Device Serial No.
+	bz	_admin_qry_serial
+
+	movlw	0x04
+	subwf	BANKED_EP1OUT_BUF+1,W	; Set Device INFO
+	bz	_admin_set_devinfo
+
+	movlw	0x05
+	subwf	BANKED_EP1OUT_BUF+1,W	; Set SerialNo
+	bz	_admin_set_serialno
+
+	retlw	BSTAT_INVALID_COMMAND
+
+_admin_set_dmx
+	movf	BANKED_EP1OUT_BUF+2,W
+	movwf	DMX_SOF_BYTE
+	bcf	YADA_STATUS,YADA_MODE_BIT	; Mode 0 = DMX
+	retlw	BSTAT_OK
+
+_admin_set_passthrough
+	movf	BANKED_EP1OUT_BUF+2,W
+	movwf	DMX_SOF_BYTE
+	bsf	YADA_STATUS,YADA_MODE_BIT
+	retlw	BSTAT_OK
+
+_admin_qry_device
+_admin_qry_serial
+_admin_set_devinfo
+_admin_set_serialno
+	retlw	BSTAT_INVALID_COMMAND
+
+#ifdef OLD_CODE
+; Used Packet length to determine packet function
 	movlw	0x22   ; Length of the DMX packet
 	subwf	BANKED_EP1OUT_CNT,W
 	bz	_dmx_packet
+
 	movlw	BCMD_SET_PARAMS_LEN
 	subwf	BANKED_EP1OUT_CNT,w
 	bz	_bootloader_set_params
+
 	movlw	BCMD_WRITE_LEN
 	subwf	BANKED_EP1OUT_CNT,w
 	bz	_bootloader_write
+
 	movlw	BCMD_RESET_LEN
 	subwf	BANKED_EP1OUT_CNT,w
 	bz	_bootloader_reset
-	retlw	BSTAT_INVALID_COMMAND
 
+	retlw	BSTAT_INVALID_COMMAND
+#endif
+
+_pass_through_packet
 _dmx_packet
 	movlw	high DmxUniverse
 	movwf	FSR0H
@@ -645,11 +735,11 @@ _dmx_led_cnt
 ; Resets the device if the received byte matches the reset character.
 _bootloader_reset
 	movlw	BCMD_RESET_CHAR
-	subwf	BANKED_EP1OUT_BUF,w	; check received character
+	subwf	BANKED_EP1OUT_BUF+2,w	; check received character
 	skpz
 	retlw	BSTAT_INVALID_COMMAND
 ; command is valid, reset the device
-	reset
+	lcall	_handle_reset
 
 ; Sets the write address, expected checksum of the next 32 words,
 ; and erases the row at that address if the last byte of the command matches

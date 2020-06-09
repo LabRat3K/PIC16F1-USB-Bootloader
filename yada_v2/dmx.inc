@@ -63,6 +63,7 @@
 
 #define DMX_BREAK_PIN 	LATA,5
 #define DMX_BREAK_DIR	TRISA,5
+#define DMX_LED_MASK    0x04
 
 ; Variables memory allocation  
 ;;dmxdata UDATA
@@ -73,11 +74,21 @@
 	FSR0_DMXL		; Save Context outside of IRQ Handler
 	FSR0_DMXH		;
 	DMX_BLINK		; 44 packets per second
+	DMX_SOF_BYTE		;
+	YADA_STATUS		; 0 = DMX, 1 = PASSTHROUGH, 2 = ??
 	end_bank0_minor_vars:0
  ENDC
  if end_bank0_minor_vars > 0x80
 	error "Bank 0 Global  Variable Space overrun"
  endif
+
+;	YADA_STATUS FLAGS
+;
+;	Bit 0 - 0x01 -   Mode  0 = DMX  1 = PASSTHROUGH
+;       Bit 7 - 0x80 -   Buffer Mode 0 = available 1 = Busy
+;
+YADA_MODE_BIT	equ	(0)
+YADA_BUSY_BIT	equ	(7)
 
 ;DmxUniverse equ 0x2200 ; 512 bytes of DMX Universe Values
 
@@ -117,14 +128,18 @@ SENDBREAK
 	movwf	TMR0
 
 	decf	DmxTxState,F	; proceed to State2 SENDMAB 
- ; BLINK routine
+
+ 	; Check for BLINK routine
 	decfsz  DMX_BLINK,F
 	return
 
 	movlw	44		; Every 44 packets.. should toggle 1HZ (ish)
 	movwf	DMX_BLINK
 
-	movlw	0x04
+	clrf	DMX_SOF_BYTE	; Default SOF byte
+	clrf	YADA_STATUS	; Default SOF byte
+
+	movlw	DMX_LED_MASK
 	BANKSEL LATC 		; BANK 2
 	xorwf	LATC,F			; Turn on DMX LED,F
 
@@ -140,9 +155,9 @@ SENDMAB
 	movwf	FSR0_DMXH	
 	decf	DmxTxState,f	; proceed to State1  SENDDATA
 
+	movf	DMX_SOF_BYTE,W
 	BANKSEL TXREG ; BANK 3
-
-	clrf    TXREG          		; send NULL START CODE 
+	movwf   TXREG          		; send NULL START CODE 
 
 	BANKSEL PIE1  ; BANK 1
 	bsf	PIE1,TXIE		; Enable UART TX interrupt
