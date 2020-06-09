@@ -1,58 +1,25 @@
 ; vim:noet:sw=8:ts=8:ai:syn=pic
 ; asmsyntax=pic
 ;
-; USB 512-Word CDC Bootloader for PIC16(L)F1454/5/9
+; Based on the USB 512-Word CDC Bootloader for PIC16(L)F1454/5/9
 ; Copyright (c) 2015, Matt Sarnoff (msarnoff.org)
 ; v1.0, February 12, 2015
 ; Released under a 3-clause BSD license: see the accompanying LICENSE file.
 ;
-; Bootloader is entered if the MCLR/RA3 pin is grounded at power-up or reset,
-; or if there is no application programmed. (The internal pull-up is used,
-; no external resistor is necessary.)
+; DMX Code from Andrew Williams Copyright (c) 2020
+; YADA Command Handlers from Andrew Williams Copyright (c) 2020
 ;
-; To be detected as a valid application, the lower 8 bytes of the first
-; instruction word must NOT be 0xFF.
 ;
-; At application start, the device is configured with a 48MHz CPU clock,
-; using the internal oscillator and 3x PLL. If a different oscillator
-; configuration is required, it must be set by the application.
 ;
-; A serial number between 0 and 65535 should be specified during the build
-; by using the gpasm -D argument to set the SERIAL_NUMBER symbol, e.g.
-;   gpasm -D SERIAL_NUMBER=12345
-; If not specified, it will default to zero.
-; A host may not behave correctly if multiple PICs with the same serial number
-; are connected simultaneously.
-;
-; Code notes:
-; - Labels that do not begin with an underscore can be called as functions.
-;   Labels that begin with an underscore are not safe to call, they should only
-;   be reached via goto.
-;
-; - FSR0L, FSR0H, FSR1L, and FSR1H are used as temporary registers in several
-;   places, e.g. as loop counters. They're accessible regardless of the current
-;   bank, and automatically saved/restored on interrupt. Neato!
-;
-; - As much stuff as possible is packed into bank 0 of RAM. This includes the
-;   buffer descriptors, bootloader state, endpoint 0 OUT and IN buffers,
-;   the endpoint 1 IN buffer (only a single byte is used), and the beginning of
-;   the 64-byte endpoint 1 OUT buffer.
-;
-; - Notification endpoint 2 is enabled, but never used. The endpoint 2 IN
-;   buffer descriptor is left uninitialized. The endpoint 2 OUT buffer
-;   descriptor is used as 4 bytes of RAM.
-;
-; - The programming protocol is described in the 'usb16f1prog' script. It is
-;   very minimal, but does provide checksum verification. Writing the ID words
-;   (0x8000-8003) is not supported at this time, and writing the configuration
-;   words is not possible via self-programming.
+; Build flag - re-use CDC code from the bootloader
+USE_BOOTLOADER_CDC	equ 0
 
-USE_BOOTLOADER_CDC 	equ 0 
+; Build flags - use interrupts for USB code (vs polling)
 USB_INTERRUPTS          equ 1
 
 
-; Should come from the impot_list.inc
-BOOTLOADER_SIZE		equ	0x200
+; Should come from the import_list.inc
+;BOOTLOADER_SIZE	equ	0x200
 
         radix dec
 	list n=0,st=off
@@ -72,6 +39,9 @@ SERIAL_NUMBER_DIGIT_CNT	equ	4
 	ifndef SERIAL_NUMBER
 		variable SERIAL_NUMBER=42	; Why doesnt 'equ' work here? Go figure
 	endif
+;; -----------------------------
+;; LED Definitions
+;; -----------------------------
 
 #define BUTTON_PORT PORTA
 #define BUTTON  PORTA,3
@@ -84,20 +54,26 @@ SERIAL_NUMBER_DIGIT_CNT	equ	4
 #define LED_USB_DIR TRISC,3
 #define LED_DMX_DIR TRISC,2
 
-#define MAX_CODE_SIZE  ( 0x1F80 )
-#define HIGH_AVAIL_FLASH ( 0x1F80 ) ; TBD
+#define LED_MASK_USB 0x08
+#define LED_MASK_DMX 0x04
 
-; I plan to apply for an Openmoko Product ID: the current product ID is temporary.
-; If your organization has its own vendor ID/product ID, substitute it here.
-; The Openmoko vendor/product ID cannot be used in closed-source/non-open-hardware
-; projects: see http://wiki.openmoko.org/wiki/USB_Product_IDs
+;; ----------------------------
+;; Code Space Sizes
+;; ----------------------------
 
+#define MAX_CODE_SIZE    ( 0x1F80 )	; Leave space for HIGH availability FLASH
+#define HIGH_AVAIL_FLASH ( 0x1F80 )	; Address for HIGH availability FLASH
+
+; -----------------------------------------------------------------------
 ; LabRat - updated with VID/PID assigned to YADA2 project by Microchip
 ;          THANK YOU MICROCHIP!! You ROCK!
+; -----------------------------------------------------------------------
 USB_VENDOR_ID          equ     0x04D8
 USB_PRODUCT_ID         equ     0xEBC2
 
-; Descriptor Lengths
+; -------------------------------
+; Descriptor Lengths & Locations
+; -------------------------------
 DEVICE_DESC_LEN		equ	18	; device descriptor length
 CONFIG_DESC_TOTAL_LEN	equ	32	; total length of configuration descriptor
 SERIAL_NUM_DESC_LEN	equ	2+(SERIAL_NUMBER_DIGIT_CNT*2)
@@ -132,6 +108,7 @@ BANKED_EP1OUT_BUF	equ	0xA0	;BANKED_EP1IN_BUF+EP1_IN_BUF_SIZE
 
 ; High byte of all endpoint buffers.
 EPBUF_ADRH		equ	(EP0OUT_BUF>>8)
+
 	if ((EP0IN_BUF>>8) != (EP0OUT_BUF>>8)) || ((EP1OUT_BUF>>8) != (EP0OUT_BUF>>8)) || ((EP1IN_BUF>>8) != (EP0OUT_BUF>>8))
 		error "Endpoint buffers must be in the same 256-word region"
 	endif
@@ -139,10 +116,14 @@ EPBUF_ADRH		equ	(EP0OUT_BUF>>8)
 ; Total length of all RAM (variables, buffers, BDT entries) used by the bootloader,
 USED_RAM_LEN		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE-BDT_START
 
-LED_COUNT_USB		equ 	BANKED_EP1OUT_BUF+ EP1_OUT_BUF_SIZE+2
+;; ----------------------------
+;; RAM Block to Hold DMX Buffer
+;; ----------------------------
 DmxUniverse		equ	0x2200
 
+; -------------------
 ; USB_STATE bit flags
+; -------------------
 IS_CONTROL_WRITE	equ	0	; current endpoint 0 transaction is a control write
 ADDRESS_PENDING		equ	1	; need to set address in next IN transaction
 DEVICE_CONFIGURED	equ	2	; the device is configured
@@ -151,15 +132,15 @@ DEVICE_CONFIGURED	equ	2	; the device is configured
 ; API from bootloader
 ; - - - - - - - - - - - - - - 
   org APP_ENTRY_POINT
-  pagesel _app_main
+  PAGESEL _app_main
   goto    _app_main
 
   org APP_CONFIG
-  pagesel _app_config
+  PAGESEL _app_config
   goto    _app_config ; must end with 'retlw' instruction
 
   org APP_INTERRUPT
-  pagesel _app_interrupt
+  PAGESEL _app_interrupt
   call    _app_interrupt
   retfie
 
@@ -178,9 +159,10 @@ _app_interrupt
         btfss   PIR1,TXIF   ; Did the TXIF interrupt go off?
         goto    _dmx_irq_done
 
-	pagesel	DmxIrqHandler
+	PAGESEL	DmxIrqHandler
         call	DmxIrqHandler
-        pagesel _app_interrupt
+        PAGESEL _app_interrupt
+
 _dmx_irq_done
 	if USB_INTERRUPTS
 	else
@@ -189,43 +171,43 @@ _dmx_irq_done
 
 usb_event_handler
 	if USB_INTERRUPTS
-	BANKSEL PIR2
-        btfss	PIR2,USBIF
-	return
+	  BANKSEL PIR2
+          btfss	PIR2,USBIF
+	  return
 	else
 	endif
 
-        banksel UIR
+        BANKSEL UIR
 ; USB reset?
         btfss   UIR,URSTIF
         goto    _utrans         ; not a reset? just start servicing transactions
         lcall   usb_init        ; if so, reset the USB interface (clears interrupts)
-        pagesel _app_interrupt
+        PAGESEL _app_interrupt
 
         if USB_INTERRUPTS
-          banksel PIE2
-          bsf     PIE2,USBIE      ; reenable USB interrupts
+          BANKSEL PIE2
+          bsf     PIE2,USBIE	; reenable USB interrupts
         endif
 
-        banksel UIR
+        BANKSEL UIR
         bcf     UIR,URSTIF      ; clear the flag
 ; service transactions
 _utrans
-        banksel UIR
+        BANKSEL UIR
         btfss   UIR,TRNIF
         goto    _usdone
-        movfw   USTAT           ; stash the status in a temp register
+        movf	USTAT,W		; stash the status in a temp register
         movwf   FSR1H
         bcf     UIR,TRNIF       ; clear flag and advance USTAT fifo
-        banksel BANKED_EP0OUT_STAT
+        BANKSEL BANKED_EP0OUT_STAT
         andlw   USTAT_ENDP_MASK ; check endpoint number
         bnz     _ucdc           ; if not endpoint 0, it's a CDC message
         lcall   usb_service_ep0 ; handle the control message
-        pagesel _app_interrupt
+        PAGESEL _app_interrupt
         goto    _utrans
 ; clear USB interrupt
 _usdone
-        banksel PIR2
+        BANKSEL PIR2
         bcf     PIR2,USBIF
         return                  ; Bootloader frames calls this as standard CALL (!retfie)
 _ucdc
@@ -233,12 +215,10 @@ _ucdc
         goto    _utrans
 
 
-;;; Idle loop. In bootloader mode, the MCU just spins here, and all USB
-;;; communication is interrupt-driven.
-;;; This snippet is deliberately located within the first 256 words of program
-;;; memory, so we can easily check in the interrupt handler if the interrupt
-;;; occurred while executing application code or bootloader code.
-;;; (TOSH will be 0x00 when executing bootloader code, i.e. this snippet)
+; -------------------------------
+; Main Loop - this is the inner 
+; tight loop for the application
+; -------------------------------
 main_loop
 	bsf	INTCON,PEIE
 	bsf	INTCON,GIE	; enable interrupts
@@ -255,9 +235,9 @@ _loop
 	  call	usb_event_handler ; Polling to check forUSB events
 	endif
 
-	pagesel	DmxTransmit
+	PAGESEL	DmxTransmit
         call	DmxTransmit ; Polling check for DMX frame
-	pagesel $
+	PAGESEL $
 
         BANKSEL BUTTON_PORT
         btfss   BUTTON  ; Is the button pressed?
@@ -270,7 +250,7 @@ _handle_reset
 	bsf	LED_USB
 	bcf	LED_PWR
 	bsf	LED_DMX
-        RESET
+        reset
 
 
 ;;; Handles a control transfer on endpoint 0.
@@ -282,7 +262,7 @@ usb_service_ep0
 	btfsc	FSR1H,DIR			; is it an IN transfer or an OUT/SETUP?
 	goto	_usb_ctrl_in
 ; it's an OUT or SETUP transfer
-	movfw	BANKED_EP0OUT_STAT
+	movf	BANKED_EP0OUT_STAT,W
 	andlw	BDnSTAT_PID_MASK		; isolate PID bits
 	sublw	PID_SETUP			; is it a SETUP packet?
 	bnz	arm_ep0_out			; if not, it's a regular OUT, just rearm the buffer
@@ -298,7 +278,7 @@ _usb_ctrl_setup
 	bcf	BANKED_EP0OUT_STAT,UOWN	; dearm the OUT endpoint
 	bcf	BANKED_EP0IN_STAT,UOWN	; dearm the OUT endpoint
 
-	movfw	BANKED_EP0OUT_BUF+bmRequestType
+	movf	BANKED_EP0OUT_BUF+bmRequestType,W
 	btfss	BANKED_EP0OUT_BUF+bmRequestType,7	; is this host->device?
 	bsf	USB_STATE,IS_CONTROL_WRITE		; if so, this is a control write
 ; check request number: is it Get Descriptor?
@@ -321,9 +301,9 @@ _usb_ctrl_setup
 
 ; Finishes a rejected SETUP transaction: the endpoints are stalled
 _usb_ctrl_invalid
-	banksel	UCON
+	BANKSEL	UCON
 	bcf	UCON,PKTDIS	; reenable packet processing
-	banksel	BANKED_EP0IN_STAT
+	BANKSEL	BANKED_EP0IN_STAT
 	movlw	_DAT0|_DTSEN|_BSTALL
 	call	arm_ep0_in_with_flags
 arm_ep0_out
@@ -337,9 +317,9 @@ arm_ep0_out_with_flags			; W specifies STAT flags
 
 ; Finishes a successful SETUP transaction.
 _usb_ctrl_complete
-	banksel	UCON
+	BANKSEL	UCON
 	bcf	UCON,PKTDIS		; reenable packet processing
-	banksel	USB_STATE
+	BANKSEL	USB_STATE
 	btfsc	USB_STATE,IS_CONTROL_WRITE
 	goto	_cwrite
 ; this is a control read; prepare the IN endpoint for the data stage
@@ -362,7 +342,6 @@ _cwrite	bcf	BANKED_EP0IN_STAT,UOWN	; ensure we have ownership of the buffer
 	clrf	BANKED_EP0IN_CNT	; we'll be sending a zero-length packet
 	movlw	_DAT0|_DTSEN|_BSTALL	; make OUT buffer ready for next SETUP packet
 	goto	_armbfs			; arm OUT and IN buffers
-
 
 
 ; Handles a Get Descriptor request.
@@ -438,7 +417,7 @@ _set_data_in_count_from_w
 	subwf	BANKED_EP0OUT_BUF+wLengthL,w
 	bc	_usb_ctrl_complete
 
-	movfw	BANKED_EP0OUT_BUF+wLengthL
+	movf	BANKED_EP0OUT_BUF+wLengthL,W
 	movwf	EP0_DATA_IN_COUNT
 	goto	_usb_ctrl_complete
 
@@ -491,8 +470,8 @@ _check_for_pending_address
 	return
 ; read the address out of the setup packed in the OUT buffer
 	bcf	USB_STATE,ADDRESS_PENDING
-	movfw	BANKED_EP0OUT_BUF+wValueL
-	banksel	UADDR
+	movf	BANKED_EP0OUT_BUF+wValueL,W
+	BANKSEL	UADDR
 	movwf	UADDR
 	return
 
@@ -510,11 +489,11 @@ ep0_read_in
 	tstf	EP0_DATA_IN_COUNT		; do nothing if there are 0 bytes to send
 	skpnz
 	return
-	movfw	EP0_DATA_IN_PTR			; set up source pointer
+	movf	EP0_DATA_IN_PTR,W		; set up source pointer
 	movwf	FSR0L
 	movlw	DESCRIPTOR_ADRH|0x80
 	movwf	FSR0H
-	ldfsr1d	EP0IN_BUF				; set up destination pointer
+	ldfsr1d	EP0IN_BUF			; set up destination pointer
 	clrw
 ; byte copy loop
 _bcopy	sublw	EP0_BUF_SIZE		; have we filled the buffer?
@@ -522,11 +501,11 @@ _bcopy	sublw	EP0_BUF_SIZE		; have we filled the buffer?
 	moviw	FSR0++
 	movwi	FSR1++
 	incf	BANKED_EP0IN_CNT,f	; increase number of bytes copied
-	movfw	BANKED_EP0IN_CNT	; save to test on the next iteration
+	movf	BANKED_EP0IN_CNT,W	; save to test on the next iteration
 	decfsz	EP0_DATA_IN_COUNT,f	; decrement number of bytes remaining
 	goto	_bcopy
 ; write back the updated source pointer
-_bcdone	movfw	FSR0L
+_bcdone	movf	FSR0L,W
 	movwf	EP0_DATA_IN_PTR
 	return
 
@@ -535,7 +514,7 @@ _bcdone	movfw	FSR0L
 ;;; returns:	none
 ;;; clobbers:	W, BSR=0
 cdc_init
-	banksel	BANKED_EP1OUT_STAT
+	BANKSEL	BANKED_EP1OUT_STAT
 	call	arm_ep1_out
 	; arm EP1 IN buffer, clearing data toggle bit
 	clrw
@@ -547,7 +526,6 @@ arm_ep1_in
 	xorwf	BANKED_EP1IN_STAT,f	; update data toggle (if bit is set in W)
 	bsf	BANKED_EP1IN_STAT,UOWN
 	return
-
 
 
 ;;; Services a transaction on one of the CDC endpoints.
@@ -565,7 +543,7 @@ usb_service_cdc
 	bz	arm_ep1_out		; (just ignore them and rearm the OUT buffer)
 	bcf	BANKED_EP1IN_STAT,UOWN
 	call	_yada_cmd		; execute command; status returned in W
-	banksel	BANKED_EP1IN_BUF
+	BANKSEL	BANKED_EP1IN_BUF
 	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
 	movlw	1
 	movwf	BANKED_EP1IN_CNT	; output byte count is 1
@@ -607,7 +585,7 @@ arm_ep1_out
 ;       3- Reset Device
 ;
 _yada_cmd
-	banksel BANKED_EP1OUT_BUF	; Is DMX frame?
+	BANKSEL BANKED_EP1OUT_BUF	; Is DMX frame?
 	movlw	0x40
 	subwf	BANKED_EP1OUT_BUF,W
 	bz	_dmx_packet
@@ -619,33 +597,39 @@ _yada_cmd
 	movlw	0x42			; Is ADMIN frame?
 	subwf	BANKED_EP1OUT_BUF,W
 	bz	_admin_packet
-	
-	movlw	0x43			; Is Reset Request?
+
+	movlw	0x43 			; Is Reset Request?
 	subwf	BANKED_EP1OUT_BUF,W
-	bz	_bootloader_reset
+	bz	_yada_cmd_reset
 
 	retlw	BSTAT_INVALID_COMMAND
 
 _admin_packet
+	; 0x42 00 <SOF>
 	movf	BANKED_EP1OUT_BUF+1,F	; Set Mode to DMX?
 	bz	_admin_set_dmx
 
+	; 0x42 01 <SOF> 
 	movlw	0x01
 	subwf	BANKED_EP1OUT_BUF+1,W	; Set Mode to Passthrough?
 	bz	_admin_set_passthrough
 
+	; 0x42 02
 	movlw	0x02
 	subwf	BANKED_EP1OUT_BUF+1,W	; Qry Device INFO
 	bz	_admin_qry_device
 
+	; 0x42 03
 	movlw	0x03
 	subwf	BANKED_EP1OUT_BUF+1,W	; Qry Device Serial No.
 	bz	_admin_qry_serial
 
+	; 0x42 04 <0xYY> <0xYY> <0xYY> <0xYY> 
 	movlw	0x04
 	subwf	BANKED_EP1OUT_BUF+1,W	; Set Device INFO
 	bz	_admin_set_devinfo
 
+	; 0x42 05 <0xYY> <0xYY> <0xYY> <0xYY> 
 	movlw	0x05
 	subwf	BANKED_EP1OUT_BUF+1,W	; Set SerialNo
 	bz	_admin_set_serialno
@@ -678,15 +662,15 @@ _admin_set_serialno
 
 	movlw	BCMD_SET_PARAMS_LEN
 	subwf	BANKED_EP1OUT_CNT,w
-	bz	_bootloader_set_params
+	bz	_flash_set_params
 
 	movlw	BCMD_WRITE_LEN
 	subwf	BANKED_EP1OUT_CNT,w
-	bz	_bootloader_write
+	bz	_flash_write
 
 	movlw	BCMD_RESET_LEN
 	subwf	BANKED_EP1OUT_CNT,w
-	bz	_bootloader_reset
+	bz	_yada_cmd_reset
 
 	retlw	BSTAT_INVALID_COMMAND
 #endif
@@ -697,7 +681,7 @@ _dmx_packet
 	movwf	FSR0H
 	movlw	low DmxUniverse
 	movwf	FSR0L
-	banksel BANKED_EP1OUT_BUF+1   ; If DMX & 1st packet of frame..
+	BANKSEL BANKED_EP1OUT_BUF+1   ; If DMX & 1st packet of frame..
 	movf	BANKED_EP1OUT_BUF+1,W ;    Jump to dmx_led_cnt
 	bz	_dmx_led_cnt
 _dmx_skip_loop
@@ -721,19 +705,18 @@ _dmx_copy_loop
 	retlw	BSTAT_OK
 
 _dmx_led_cnt
-	banksel LED_COUNT_USB
-	decfsz	LED_COUNT_USB,F
+	decfsz	USB_BLINK,F
 	goto	_dmx_copy_payload
 	movlw	44
-	movwf	LED_COUNT_USB
-	movlw	0x08  ; USB_LED
-	banksel	LATC
+	movwf	USB_BLINK
+	movlw	LED_MASK_USB 
+	BANKSEL	LATC
 	xorwf	LATC,F
-	banksel BANKED_EP1OUT_BUF
+	BANKSEL BANKED_EP1OUT_BUF
 	goto	_dmx_copy_payload
 
 ; Resets the device if the received byte matches the reset character.
-_bootloader_reset
+_yada_cmd_reset
 	movlw	BCMD_RESET_CHAR
 	subwf	BANKED_EP1OUT_BUF+2,w	; check received character
 	skpz
@@ -745,17 +728,17 @@ _bootloader_reset
 ; and erases the row at that address if the last byte of the command matches
 ; the "erase" character.
 ; BSR=0
-_bootloader_set_params
-	movfw	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_CKSUM	; expected checksum
+_flash_set_params
+	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_CKSUM,W	; expected checksum
 	movwf	EXPECTED_CHECKSUM			; save for verification during write command
-	movfw	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ERASE
-	movwf	FSR1L	; temp
-	movfw	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ADRL	; address lower bits
-	movwf	FSR1H	; temp
-	movfw	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ADRH	; address upper bits 
-	banksel	PMADRH
+	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ERASE,W
+	movwf	FSR1L		; temp
+	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ADRL,W	; address lower bits
+	movwf	FSR1H		; temp
+	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ADRH,W	; address upper bits 
+	BANKSEL	PMADRH
 	movwf	PMADRH
-	movfw	FSR1H	; bring lower bits out of temp
+	movf	FSR1H,W		; bring lower bits out of temp
 	movwf	PMADRL
 ; do we need to erase?
 	movlw	BCMD_ERASE_CHAR
@@ -777,18 +760,18 @@ _wdone
 ; matches the previously sent value. If so, the 32 bytes are then written to
 ; flash memory at the address in PMADRH:PMADRL. (set by a prior command)
 ; BSR=0
-_bootloader_write
+_flash_write
 ; The expected checksum is the two's complement of the sum of the bytes.
 ; If the data is valid, we can add the checksum to the sum of the bytes and
 ; the result will be 0. We initialize a temporary register with the expected
 ; checksum, and then add each byte to it as it's processed.
 ; If the value in the temp register is 0 after all 64 bytes have been copied
 ; to the write latches, proceed with the write.
-	movfw	EXPECTED_CHECKSUM
+	movf	EXPECTED_CHECKSUM,W
 	movwf	FSR1L			; use a temp for the running checksum
 	ldfsr0d	EP1OUT_BUF		; set up read pointer
 	movlw	(1<<LWLO)|(1<<WREN)	; write to latches only
-	banksel	PMCON1
+	BANKSEL	PMCON1
 	movwf	PMCON1
 ; simultaneously compute the checksum of the 32 words and copy them to the
 ; write latches
@@ -860,7 +843,7 @@ ret	return
 ;;; Main function
 ; Now entering application code: initialize the USB interface and wait for commands.
 _app_main
-        banksel TRISA ; BANK 1
+        BANKSEL TRISA ; BANK 1
         bcf     LED_PWR_DIR
         bcf     LED_USB_DIR
         bcf     LED_DMX_DIR
@@ -868,14 +851,13 @@ _app_main
         bcf     TRISC,4 ; EUSART - TX
         bsf     TRISC,5 ; EUSART - RX 
 
-        banksel LATA ; BANK 2
+        BANKSEL LATA ; BANK 2
         bcf     LED_PWR ; GREEN ; Turn ON  PWR LED
         bsf     LED_DMX ; AMBER ; Turn OFF DMX LED
         bsf     LED_USB ; BLUE  ; Turn OFF USB LED
 
-	banksel LED_COUNT_USB
 	movlw	44
-	movwf	LED_COUNT_USB
+	movwf	USB_BLINK
 
         BANKSEL ANSELA ; BANK 3
         clrf    ANSELA
@@ -883,18 +865,18 @@ _app_main
 ; Initialize USB
 	lcall	usb_init ;(on return BSR=UNKNOWN)
 
-	pagesel	_app_main
+	PAGESEL	_app_main
 
 ; Attach to the bus (could be a subroutine, but inlining it saves 2 instructions)
 _usb_attach
-	banksel	UCON		; reset UCON
+	BANKSEL	UCON		; reset UCON
 	clrf	UCON
 	if USB_INTERRUPTS
-	  banksel	PIE2
+	  BANKSEL	PIE2
 	  bsf	PIE2,USBIE	; enable USB interrupts
 	  bsf	INTCON,PEIE
 	endif
-	banksel	UCON
+	BANKSEL	UCON
 _usben
 	bsf	UCON,USBEN	; enable USB module and wait until ready
 	btfss	UCON,USBEN
@@ -903,9 +885,9 @@ _usben
 ; Enable interrupts and enter an idle loop
 ; (Loop code is located at the top of the file, in the first 256 words of
 ; program memory)
-	pagesel	DmxSetup
+	PAGESEL	DmxSetup
         call    DmxSetup
-	pagesel $
+	PAGESEL $
 
 	goto	main_loop
 
@@ -915,7 +897,7 @@ _usben
 ;;; returns:	none
 ;;; clobbers:	W, BSR, FSR0
 get_app_power_config
-	banksel	APP_POWER_CONFIG
+	BANKSEL	APP_POWER_CONFIG
 	movlw	0x33			; default value: bus-powered, max current 100 mA
 	movwf	APP_POWER_CONFIG
 	return
@@ -927,10 +909,10 @@ get_app_power_config
 ;;; clobbers:	W, BSR, FSR0, FSR1H
 usb_init
 ; disable USB interrupts
-	banksel	PIE2
+	BANKSEL	PIE2
 	bcf	PIE2,USBIE
 ; clear USB registers
-	banksel	UEIR
+	BANKSEL	UEIR
 	clrf	UEIR
 	clrf	UIR
 ; disable endpoints we won't use
@@ -959,7 +941,7 @@ _ramclr
 ; get the app's power configuration (if it's present)
 	call	get_app_power_config
 ; reset ping-pong buffers and address
-	banksel	UCON
+	BANKSEL	UCON
 	bsf	UCON,PPBRST
 	clrf	UADDR
 	bcf	UCON,PKTDIS	; enable packet processing
@@ -986,7 +968,7 @@ _initep
 	;movlw	(1<<EPHSHK)|(1<<EPCONDIS)|(1<<EPINEN)
 	;movwf	UEP2
 ; initialize endpoint buffers and counts
-	banksel	BANKED_EP0OUT_ADRL
+	BANKSEL	BANKED_EP0OUT_ADRL
 	movlw	low EP0OUT_BUF	; set endpoint 0 OUT address low
 	movwf	BANKED_EP0OUT_ADRL
 	movlw	low EP0IN_BUF	; set endpoint 0 IN address low
