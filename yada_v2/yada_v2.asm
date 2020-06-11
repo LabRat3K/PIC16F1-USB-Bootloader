@@ -542,11 +542,10 @@ usb_service_cdc
 	movf	BANKED_EP1OUT_CNT,f	; test for a zero-length packet
 	bz	arm_ep1_out		; (just ignore them and rearm the OUT buffer)
 	bcf	BANKED_EP1IN_STAT,UOWN
-	call	_yada_cmd		; execute command; status returned in W
-	BANKSEL	BANKED_EP1IN_BUF
-	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
-	movlw	1
-	movwf	BANKED_EP1IN_CNT	; output byte count is 1
+	call	_yada_cmd		; execute command; OUTPUT length returned in W
+	BANKSEL BANKED_EP1IN_BUF
+;	skpz				; no output - rearm the ep1 buffer
+	movwf	BANKED_EP1IN_CNT	; output byte count as returned from call
 	bsf	BANKED_EP1IN_STAT,UOWN
 	; fall through to arm_ep1_out
 
@@ -602,7 +601,11 @@ _yada_cmd
 	subwf	BANKED_EP1OUT_BUF,W
 	bz	_yada_cmd_reset
 
-	retlw	BSTAT_INVALID_COMMAND
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	BSTAT_INVALID_COMMAND
+	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	retlw	1
+	
 
 _admin_packet
 	; 0x42 00 <SOF>
@@ -634,25 +637,88 @@ _admin_packet
 	subwf	BANKED_EP1OUT_BUF+1,W	; Set SerialNo
 	bz	_admin_set_serialno
 
-	retlw	BSTAT_INVALID_COMMAND
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	BSTAT_INVALID_COMMAND
+	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	retlw	1
 
 _admin_set_dmx
 	movf	BANKED_EP1OUT_BUF+2,W
 	movwf	DMX_SOF_BYTE
 	bcf	YADA_STATUS,YADA_MODE_BIT	; Mode 0 = DMX
-	retlw	BSTAT_OK
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	0xC2
+	movwf	BANKED_EP1IN_BUF
+	movlw	0x00
+	movwf	BANKED_EP1IN_BUF+1
+	movlw	BSTAT_OK
+	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	retlw	3
 
 _admin_set_passthrough
 	movf	BANKED_EP1OUT_BUF+2,W
 	movwf	DMX_SOF_BYTE
 	bsf	YADA_STATUS,YADA_MODE_BIT
-	retlw	BSTAT_OK
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	0xC2
+	movwf	BANKED_EP1IN_BUF
+	movlw	0x01
+	movwf	BANKED_EP1IN_BUF+1
+	movlw	BSTAT_OK
+	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	retlw	3
 
 _admin_qry_device
+	BANKSEL BANKED_EP1IN_BUF ; 0x42 03
+	movlw	0xC2
+	movwf	BANKED_EP1IN_BUF
+	movlw 	0x02
+	movwf	BANKED_EP1IN_BUF+1
+	movlw	0x00
+	movwf	BANKED_EP1IN_BUF+2
+	movlw	0x01
+	movwf	BANKED_EP1IN_BUF+3
+	movlw	0x02
+	movwf	BANKED_EP1IN_BUF+4
+	movlw	0x03
+	movwf	BANKED_EP1IN_BUF+5
+	retlw	0x06
+
 _admin_qry_serial
-_admin_set_devinfo
-_admin_set_serialno
-	retlw	BSTAT_INVALID_COMMAND
+	BANKSEL BANKED_EP1IN_BUF ; 0x42 03
+	movlw	0xC2
+	movwf	BANKED_EP1IN_BUF
+	movlw 	0x03
+	movwf	BANKED_EP1IN_BUF+1
+	movlw	0x04
+	movwf	BANKED_EP1IN_BUF+2
+	movlw	0x05
+	movwf	BANKED_EP1IN_BUF+3
+	movlw	0x06
+	movwf	BANKED_EP1IN_BUF+4
+	movlw	0x07
+	movwf	BANKED_EP1IN_BUF+5
+	retlw	0x06
+
+_admin_set_devinfo	;0x42 04
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	0xC2
+	movwf	BANKED_EP1IN_BUF
+	movlw	0x04
+	movwf	BANKED_EP1IN_BUF+1
+	movlw	BSTAT_INVALID_COMMAND
+	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	retlw	3
+
+_admin_set_serialno	;0x42 05
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	0xC2
+	movwf	BANKED_EP1IN_BUF
+	movlw	0x05
+	movwf	BANKED_EP1IN_BUF+1
+	movlw	BSTAT_INVALID_COMMAND
+	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	retlw	3
 
 #ifdef OLD_CODE
 ; Used Packet length to determine packet function
@@ -672,11 +738,14 @@ _admin_set_serialno
 	subwf	BANKED_EP1OUT_CNT,w
 	bz	_yada_cmd_reset
 
-	retlw	BSTAT_INVALID_COMMAND
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	BSTAT_INVALID_COMMAND
+	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	retlw	1
 #endif
 
-_pass_through_packet
-_dmx_packet
+_pass_through_packet	; 0x41
+_dmx_packet		; 0x40
 	movlw	high DmxUniverse
 	movwf	FSR0H
 	movlw	low DmxUniverse
@@ -702,7 +771,7 @@ _dmx_copy_loop
 	movwi	FSR0++
 	decfsz	BANKED_EP1OUT_BUF,F
 	goto	_dmx_copy_loop
-	retlw	BSTAT_OK
+	retlw	0x00	; *** ZERO LENGTH REPLY ***
 
 _dmx_led_cnt
 	decfsz	USB_BLINK,F
@@ -717,10 +786,17 @@ _dmx_led_cnt
 
 ; Resets the device if the received byte matches the reset character.
 _yada_cmd_reset
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	0xC3
+	movwf	BANKED_EP1IN_BUF
+	movlw	BSTAT_INVALID_COMMAND
+	movwf	BANKED_EP1IN_BUF+1	; copy status to IN buffer
+	
+        BANKSEL BANKED_EP1OUT_BUF
 	movlw	BCMD_RESET_CHAR
-	subwf	BANKED_EP1OUT_BUF+2,w	; check received character
+	subwf	BANKED_EP1OUT_BUF+1,w	; check received character
 	skpz
-	retlw	BSTAT_INVALID_COMMAND
+	retlw	2 	; Length of reply 
 ; command is valid, reset the device
 	lcall	_handle_reset
 
@@ -729,6 +805,11 @@ _yada_cmd_reset
 ; the "erase" character.
 ; BSR=0
 _flash_set_params
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	BSTAT_OK
+	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+
+	BANKSEL BANKED_EP1OUT_BUF
 	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_CKSUM,W	; expected checksum
 	movwf	EXPECTED_CHECKSUM			; save for verification during write command
 	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ERASE,W
@@ -744,7 +825,7 @@ _flash_set_params
 	movlw	BCMD_ERASE_CHAR
 	subwf	FSR1L,w
 	skpz
-	retlw	BSTAT_OK	; if no reset command is given, return OK
+	retlw	1	; if no reset command is given, return OK
 
 ; Erases the row of flash in PMADRH:PMADRL.
 ; BSR=3
@@ -754,7 +835,7 @@ _bootloader_erase
 	call	flash_unlock		; stalls until erase finishes
 _wdone
 	bcf	PMCON1,WREN		; clear write enable flag
-	retlw	BSTAT_OK
+	retlw	1	; lenght of OK packet
 
 ; Verifies that the checksum of the 32 words (64 bytes) in the EP1 OUT buffer
 ; matches the previously sent value. If so, the 32 bytes are then written to
@@ -796,8 +877,13 @@ _wloop
 _wcksum	
 	clrf	PMCON1
 	tstf	FSR1L
-	skpz
-	retlw	BSTAT_INVALID_CHECKSUM	; if there's a mismatch, abort the write
+	skpnz 	
+	goto	_oksum
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	BSTAT_INVALID_CHECKSUM	; if there's a mismatch, abort the write
+	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	retlw	1	; return length of reply packet (1)
+_oksum
 ; checksum is valid, write the data
 	bsf	PMCON1,WREN
 	call	flash_unlock		; stalls until write finishes
@@ -817,12 +903,17 @@ _vloop	bsf	PMCON1,RD		; read word from flash
 	retlw	BSTAT_VERIFY_FAILED
 	moviw	--FSR0			; get low byte of expected word
 	subwf	PMDATL,w		; compare with low byte written to flash
-	skpz
-	retlw	BSTAT_VERIFY_FAILED
+	skpnz
+	goto	_verifyok
+	BANKSEL	BANKED_EP1IN_BUF
+	movlw	BSTAT_VERIFY_FAILED	; reply with verify failed message 
+	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	retlw	1	; return length of reply packet (1)
+_verifyok
 	decf	PMADRL,f		; decrement read address
 	decfsz	FSR1H,f			; decrement loop count
 	goto	_vloop
-	retlw	BSTAT_OK
+	retlw	1	; return length of OK packet (already configured)
 
 
 ;;; Executes the flash unlock sequence, performing an erase or write.
@@ -1052,7 +1143,7 @@ ENDPOINT_DESCRIPTOR_1_IN
 	dt	0x05		; bDescriptorType (ENDPOINT)
 	dt	0x81		; bEndpointAddress (1 IN)
 	dt	0x02		; bmAttributes (transfer type: bulk)
-	dt	low EP1_IN_BUF_SIZE, 0x00	; wMaxPacketSize (64)
+	dt	low EP1_IN_BUF_SIZE, 0x00	; wMaxPacketSize (16)
 	dt	0x00		; bInterval
 
 ; extract nibbles from serial number
