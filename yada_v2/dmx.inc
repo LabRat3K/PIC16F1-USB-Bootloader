@@ -77,6 +77,7 @@
 	YADA_STATUS		; 0 = DMX, 1 = PASSTHROUGH, 2 = ??
 	DMX_BLINK		; 44 packets per second
 	USB_BLINK		; 44 frame '0' per second
+	TEMP			; Used for copy loop
 	end_bank0_minor_vars:0
  ENDC
  if end_bank0_minor_vars > 0x80

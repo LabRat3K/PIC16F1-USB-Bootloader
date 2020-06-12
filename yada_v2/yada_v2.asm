@@ -18,9 +18,6 @@ USE_BOOTLOADER_CDC	equ 0
 USB_INTERRUPTS          equ 1
 
 
-; Should come from the import_list.inc
-;BOOTLOADER_SIZE	equ	0x200
-
         radix dec
 	list n=0,st=off
         include "p16f1455.inc"
@@ -542,6 +539,7 @@ usb_service_cdc
 	movf	BANKED_EP1OUT_CNT,f	; test for a zero-length packet
 	bz	arm_ep1_out		; (just ignore them and rearm the OUT buffer)
 
+	; UPDATE HERE TO SELECT BUFFERS BASED ON PING_PONG ODD/EVEN SELECTION
 	movlw	high EP1IN_BUF
 	movwf	FSR0H
 	movlw	low EP1IN_BUF
@@ -555,7 +553,6 @@ usb_service_cdc
 	bcf	BANKED_EP1IN_STAT,UOWN
 	call	_yada_cmd		; execute command; OUTPUT length returned in W
 	BANKSEL BANKED_EP1IN_BUF
-;	skpz				; no output - rearm the ep1 buffer
 	movwf	BANKED_EP1IN_CNT	; output byte count as returned from call
 	bsf	BANKED_EP1IN_STAT,UOWN
 	; fall through to arm_ep1_out
@@ -595,7 +592,6 @@ arm_ep1_out
 ;       3- Reset Device
 ;
 _yada_cmd
-	;BANKSEL BANKED_EP1OUT_BUF	; Is DMX frame?
 	moviw	0[FSR1]
 	sublw	0x40 			; IS DMX frame?
 	bz	_dmx_packet
@@ -648,7 +644,6 @@ _admin_packet
 
 _admin_set_dmx
 	moviw	2[FSR1]
-	;movf	BANKED_EP1OUT_BUF+2,W
 	movwf	DMX_SOF_BYTE
 	bcf	YADA_STATUS,YADA_MODE_BIT	; Mode 0 = DMX
 	movlw	0xC2
@@ -661,7 +656,6 @@ _admin_set_dmx
 
 _admin_set_passthrough
 	moviw	2[FSR1]
-	;movf	BANKED_EP1OUT_BUF+2,W
 	movwf	DMX_SOF_BYTE
 	bsf	YADA_STATUS,YADA_MODE_BIT
 	movlw	0xC2
@@ -726,8 +720,7 @@ _dmx_packet		; 0x40
 	movwf	FSR0H
 	movlw	low DmxUniverse
 	movwf	FSR0L
-	BANKSEL BANKED_EP1OUT_BUF+1   ; If DMX & 1st packet of frame..
-	movf	BANKED_EP1OUT_BUF+1,W ;    Jump to dmx_led_cnt
+	moviw	1[FSR1]   ; If DMX & 1st packet of frame..
 	bz	_dmx_led_cnt
 _dmx_skip_loop
 	addfsr	FSR0, 16	; Multiplication/Addition loop (32 x # )
@@ -736,17 +729,13 @@ _dmx_skip_loop
 	goto	_dmx_skip_loop
 _dmx_copy_payload
 	addfsr	FSR1,2
-	;movlw	low EP1OUT_BUF+2
-	;movwf	FSR1L
-	;movlw	high EP1OUT_BUF
-	;movwf	FSR1H
 	movlw	0x20
-	; SNEAKY - use BANKED_EP1_OUT_BUF[0] (formerly 0x40) as a temp counter
-	movwf	BANKED_EP1OUT_BUF
+	; Use GLOBAL for countdown 
+	movwf	TEMP
 _dmx_copy_loop
 	moviw	FSR1++
 	movwi	FSR0++
-	decfsz	BANKED_EP1OUT_BUF,F
+	decfsz	TEMP,F
 	goto	_dmx_copy_loop
 	retlw	0x00	; *** ZERO LENGTH REPLY ***
 
@@ -758,7 +747,6 @@ _dmx_led_cnt
 	movlw	LED_MASK_USB 
 	BANKSEL	LATC
 	xorwf	LATC,F
-	BANKSEL BANKED_EP1OUT_BUF
 	goto	_dmx_copy_payload
 
 ; Resets the device if the received byte matches the reset character.
@@ -768,10 +756,7 @@ _yada_cmd_reset
 	movlw	BSTAT_INVALID_COMMAND
 	movwi	1[FSR0] 	; copy status to IN buffer
 	
-        ;BANKSEL BANKED_EP1OUT_BUF
-	;movlw	BCMD_RESET_CHAR
-	;subwf	BANKED_EP1OUT_BUF+1,w	; check received character
-	moviw	1[FSR1]
+	moviw	1[FSR1]	; check received character
 	sublw	BCMD_RESET_CHAR
 	skpz
 	retlw	2 	; Length of reply 
