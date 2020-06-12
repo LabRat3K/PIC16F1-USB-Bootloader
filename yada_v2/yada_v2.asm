@@ -482,15 +482,15 @@ _check_for_pending_address
 ;;; clobbers:	W, FSR0, FSR1
 ep0_read_in
 	bcf	BANKED_EP0IN_STAT,UOWN	; make sure we have ownership of the buffer
-	clrf	BANKED_EP0IN_CNT		; initialize buffer size to 0
-	tstf	EP0_DATA_IN_COUNT		; do nothing if there are 0 bytes to send
+	clrf	BANKED_EP0IN_CNT	; initialize buffer size to 0
+	tstf	EP0_DATA_IN_COUNT	; do nothing if there are 0 bytes to send
 	skpnz
 	return
-	movf	EP0_DATA_IN_PTR,W		; set up source pointer
+	movf	EP0_DATA_IN_PTR,W	; set up source pointer
 	movwf	FSR0L
 	movlw	DESCRIPTOR_ADRH|0x80
 	movwf	FSR0H
-	ldfsr1d	EP0IN_BUF			; set up destination pointer
+	ldfsr1d	EP0IN_BUF		; set up destination pointer
 	clrw
 ; byte copy loop
 _bcopy	sublw	EP0_BUF_SIZE		; have we filled the buffer?
@@ -585,9 +585,9 @@ arm_ep1_out
 ;                          Reply <C2> <02> <MAJ>.<MIN>, <DevIdH><DevIdL>
 ;                   <03> - Query Serial No.
 ;                          Reply <C2> <03> <MAJ>.<MIN>, <DevIdH><DevIdL>
-;	            <04> - <B1><B2><B3><B4><CSUM> : Write DeviceInfo
+;	            <04> - <B1><B2><B3><B4>: Write DeviceInfo
 ;                          Reply <C2> <04> <00/01> - ACK/NACK
-;	            <05> - <B1><B2><B3><B4><CSUM> : Write SerialNo.
+;	            <05> - <B1><B2><B3><B4>: Write SerialNo.
 ;                          Reply <C2> <05> <00/01> - ACK/NACK
 ;       3- Reset Device
 ;
@@ -671,15 +671,36 @@ _admin_qry_device ; 0x42 03
 	movwi	0[FSR0]
 	movlw 	0x02
 	movwi	1[FSR0]
-	movlw	0x00
-	movwi	2[FSR0]
-	movlw	0x00
-	movwi	3[FSR0]
-	movlw	0x00
-	movwi	4[FSR0]
-	movlw	0x00
-	movwi	5[FSR0]
-	retlw	0x06
+	addfsr  FSR0,2
+	movlw	4
+	movwf	TEMP
+	; ------ READ FROM THE DEVID MEMORY LOCATIONSNKSEL PMADRL ; Select correct Bank
+	; User ID 
+	; 0x8000   <DEV TYPE>:<HW_MSB>
+	; 0x8001   <UNUSED>:<HW_LSB>
+	; 0x8002   <UNUSED>:<DEVID_MSB>
+	; 0x8003   <UNUSED>:<DEVID_LSB>
+
+	BANKSEL PMADRL
+	clrf 	PMADRL 		; For address 0x8000
+	clrf	PMADRH 		; Clear MSB of address and set CFGS flag
+	bsf	PMCON1,CFGS 	; Select Configuration Space
+_qry_loop
+	bcf 	INTCON,GIE	; Disable interrupts
+	bsf 	PMCON1,RD 	; Initiate read
+	nop 			; REQUIRES 2 NOP instructions
+	nop 
+	bsf 	INTCON,GIE 	; Restore interrupts
+	movf	PMDATH,W 	; Get MSB of word
+	movwi	FSR0++
+	movf	PMDATL,W 	; Get LSB of word
+	movwi	FSR0++
+	incf	PMADRL,F
+	decfsz	TEMP,F
+	goto	_qry_loop
+
+	bcf	PMCON1,CFGS	; Turn off Config Space flag
+	retlw	0x0A
 
 _admin_qry_serial ; 0x42 03
 	movlw	HIGH SERIAL_NUMBER_STRING_DESCRIPTOR | 0x80
@@ -706,7 +727,34 @@ _admin_set_devinfo	;0x42 04
 	movwi	0[FSR0]
 	movlw	0x04
 	movwi	1[FSR0]
-	movlw	BSTAT_INVALID_COMMAND
+
+	; Copy data into UserInfo registers -could add a length check and/or CSUM
+	addfsr	FSR1,2
+	movlw	4
+	movwf	TEMP
+	BANKSEL	PMADRL
+	clrf	PMADRL
+	clrf	PMADRH
+	movlw	(1<<CFGS)|(1<<WREN)|(1<<FREE)
+	movwf	PMCON1
+	bcf	INTCON,GIE
+	call	flash_unlock	; Erase
+	movlw	(1<<CFGS)|(1<<LWLO)|(1<<WREN)
+	movwf	PMCON1
+_set_dev_loop
+	moviw	FSR1++
+	movwf	PMDATH
+	moviw	FSR1++
+	movwf	PMDATL
+	call	flash_unlock	
+	incf	PMADRL,F
+	decfsz	TEMP,F
+	goto	_set_dev_loop
+	bcf	PMCON1,LWLO
+	call 	flash_unlock
+	clrf	PMCON1
+	bsf	INTCON,GIE
+	movlw	BSTAT_OK
 	movwi	2[FSR0] 	; copy status to IN buffer
 	retlw	3
 
