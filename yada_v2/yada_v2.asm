@@ -673,26 +673,31 @@ _admin_qry_device ; 0x42 03
 	movwi	1[FSR0]
 	movlw	0x00
 	movwi	2[FSR0]
-	movlw	0x01
+	movlw	0x00
 	movwi	3[FSR0]
-	movlw	0x02
+	movlw	0x00
 	movwi	4[FSR0]
-	movlw	0x03
+	movlw	0x00
 	movwi	5[FSR0]
 	retlw	0x06
 
 _admin_qry_serial ; 0x42 03
+	movlw	HIGH SERIAL_NUMBER_STRING_DESCRIPTOR | 0x80
+	movwf	FSR1H
+	movlw	LOW  SERIAL_NUMBER_STRING_DESCRIPTOR
+	movwf	FSR1L
+
 	movlw	0xC2
 	movwi	0[FSR0]
 	movlw 	0x03
 	movwi	1[FSR0]
-	movlw	0x04
+	moviw	2[FSR1]
 	movwi	2[FSR0]
-	movlw	0x05
+	moviw	4[FSR1]
 	movwi	3[FSR0]
-	movlw	0x06
+	moviw	6[FSR1]
 	movwi	4[FSR0]
-	movlw	0x07
+	moviw	8[FSR1]
 	movwi	5[FSR0]
 	retlw	0x06
 
@@ -818,7 +823,7 @@ _flash_write
 	movwf	PMCON1
 ; simultaneously compute the checksum of the 32 words and copy them to the
 ; write latches
-	movlw	32			; number of words to write minus 1
+	movlw	0x20			; number of words to write minus 1
 	movwf	FSR1H			; used for loop count
 _wloop
 	moviw	FSR0++			; load lower byte
@@ -1018,8 +1023,6 @@ _initep
 	movwf	UEP0
 	movlw	(1<<EPHSHK)|(1<<EPCONDIS)|(1<<EPOUTEN)|(1<<EPINEN)
 	movwf	UEP1
-	;movlw	(1<<EPHSHK)|(1<<EPCONDIS)|(1<<EPINEN)
-	;movwf	UEP2
 ; initialize endpoint buffers and counts
 	BANKSEL	BANKED_EP0OUT_ADRL
 	movlw	low EP0OUT_BUF	; set endpoint 0 OUT address low
