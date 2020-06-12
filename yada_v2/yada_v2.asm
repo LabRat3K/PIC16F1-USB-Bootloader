@@ -541,6 +541,17 @@ usb_service_cdc
 	goto	arm_ep1_in
 	movf	BANKED_EP1OUT_CNT,f	; test for a zero-length packet
 	bz	arm_ep1_out		; (just ignore them and rearm the OUT buffer)
+
+	movlw	high EP1IN_BUF
+	movwf	FSR0H
+	movlw	low EP1IN_BUF
+	movwf	FSR0L
+
+	movlw	high EP1OUT_BUF
+	movwf	FSR1H
+	movlw	low EP1OUT_BUF
+	movwf	FSR1L
+
 	bcf	BANKED_EP1IN_STAT,UOWN
 	call	_yada_cmd		; execute command; OUTPUT length returned in W
 	BANKSEL BANKED_EP1IN_BUF
@@ -584,165 +595,130 @@ arm_ep1_out
 ;       3- Reset Device
 ;
 _yada_cmd
-	BANKSEL BANKED_EP1OUT_BUF	; Is DMX frame?
-	movlw	0x40
-	subwf	BANKED_EP1OUT_BUF,W
+	;BANKSEL BANKED_EP1OUT_BUF	; Is DMX frame?
+	moviw	0[FSR1]
+	sublw	0x40 			; IS DMX frame?
 	bz	_dmx_packet
 
-	movlw	0x41			; Is PASSTHROUGH frame?
-	subwf	BANKED_EP1OUT_BUF,W
+	moviw	0[FSR1]
+	sublw	0x41 			; IS PASSTHROUGH frame?
 	bz	_pass_through_packet
-	
-	movlw	0x42			; Is ADMIN frame?
-	subwf	BANKED_EP1OUT_BUF,W
+
+	moviw	0[FSR1]
+	sublw	0x42			; Is ADMIN frame?
 	bz	_admin_packet
 
-	movlw	0x43 			; Is Reset Request?
-	subwf	BANKED_EP1OUT_BUF,W
+	moviw	0[FSR1]
+	sublw	0x43			; Is Reset Request?
 	bz	_yada_cmd_reset
 
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	BSTAT_INVALID_COMMAND
-	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	movwi	0[FSR0]	; copy status to IN buffer
 	retlw	1
 	
 
 _admin_packet
 	; 0x42 00 <SOF>
-	movf	BANKED_EP1OUT_BUF+1,F	; Set Mode to DMX?
+	moviw	1[FSR1]			; Set Mode DMX?
 	bz	_admin_set_dmx
 
 	; 0x42 01 <SOF> 
-	movlw	0x01
-	subwf	BANKED_EP1OUT_BUF+1,W	; Set Mode to Passthrough?
+	decf	WREG,W			; Set Mode to Passthrough?
 	bz	_admin_set_passthrough
 
 	; 0x42 02
-	movlw	0x02
-	subwf	BANKED_EP1OUT_BUF+1,W	; Qry Device INFO
+	decf	WREG,W			; Qry Device INFO
 	bz	_admin_qry_device
 
 	; 0x42 03
-	movlw	0x03
-	subwf	BANKED_EP1OUT_BUF+1,W	; Qry Device Serial No.
+	decf	WREG,W			; Qry Device Serial No.
 	bz	_admin_qry_serial
 
 	; 0x42 04 <0xYY> <0xYY> <0xYY> <0xYY> 
-	movlw	0x04
-	subwf	BANKED_EP1OUT_BUF+1,W	; Set Device INFO
+	decf	WREG,W			; Set Device INFO
 	bz	_admin_set_devinfo
 
 	; 0x42 05 <0xYY> <0xYY> <0xYY> <0xYY> 
-	movlw	0x05
-	subwf	BANKED_EP1OUT_BUF+1,W	; Set SerialNo
+	decf	WREG,W			; Set SerialNo
 	bz	_admin_set_serialno
 
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	BSTAT_INVALID_COMMAND
-	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	movwi	0[FSR0]	; copy status to IN buffer
 	retlw	1
 
 _admin_set_dmx
-	movf	BANKED_EP1OUT_BUF+2,W
+	moviw	2[FSR1]
+	;movf	BANKED_EP1OUT_BUF+2,W
 	movwf	DMX_SOF_BYTE
 	bcf	YADA_STATUS,YADA_MODE_BIT	; Mode 0 = DMX
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	0xC2
-	movwf	BANKED_EP1IN_BUF
+	movwi	0[FSR0]
 	movlw	0x00
-	movwf	BANKED_EP1IN_BUF+1
+	movwi	1[FSR0]
 	movlw	BSTAT_OK
-	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	movwi	2[FSR0] 		; copy status to IN buffer
 	retlw	3
 
 _admin_set_passthrough
-	movf	BANKED_EP1OUT_BUF+2,W
+	moviw	2[FSR1]
+	;movf	BANKED_EP1OUT_BUF+2,W
 	movwf	DMX_SOF_BYTE
 	bsf	YADA_STATUS,YADA_MODE_BIT
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	0xC2
-	movwf	BANKED_EP1IN_BUF
+	movwi	0[FSR0]
 	movlw	0x01
-	movwf	BANKED_EP1IN_BUF+1
+	movwi	1[FSR0]
 	movlw	BSTAT_OK
-	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	movwi	2[FSR0] ; copy status to IN buffer
 	retlw	3
 
-_admin_qry_device
-	BANKSEL BANKED_EP1IN_BUF ; 0x42 03
+_admin_qry_device ; 0x42 03
 	movlw	0xC2
-	movwf	BANKED_EP1IN_BUF
+	movwi	0[FSR0]
 	movlw 	0x02
-	movwf	BANKED_EP1IN_BUF+1
+	movwi	1[FSR0]
 	movlw	0x00
-	movwf	BANKED_EP1IN_BUF+2
+	movwi	2[FSR0]
 	movlw	0x01
-	movwf	BANKED_EP1IN_BUF+3
+	movwi	3[FSR0]
 	movlw	0x02
-	movwf	BANKED_EP1IN_BUF+4
+	movwi	4[FSR0]
 	movlw	0x03
-	movwf	BANKED_EP1IN_BUF+5
+	movwi	5[FSR0]
 	retlw	0x06
 
-_admin_qry_serial
-	BANKSEL BANKED_EP1IN_BUF ; 0x42 03
+_admin_qry_serial ; 0x42 03
 	movlw	0xC2
-	movwf	BANKED_EP1IN_BUF
+	movwi	0[FSR0]
 	movlw 	0x03
-	movwf	BANKED_EP1IN_BUF+1
+	movwi	1[FSR0]
 	movlw	0x04
-	movwf	BANKED_EP1IN_BUF+2
+	movwi	2[FSR0]
 	movlw	0x05
-	movwf	BANKED_EP1IN_BUF+3
+	movwi	3[FSR0]
 	movlw	0x06
-	movwf	BANKED_EP1IN_BUF+4
+	movwi	4[FSR0]
 	movlw	0x07
-	movwf	BANKED_EP1IN_BUF+5
+	movwi	5[FSR0]
 	retlw	0x06
 
 _admin_set_devinfo	;0x42 04
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	0xC2
-	movwf	BANKED_EP1IN_BUF
+	movwi	0[FSR0]
 	movlw	0x04
-	movwf	BANKED_EP1IN_BUF+1
+	movwi	1[FSR0]
 	movlw	BSTAT_INVALID_COMMAND
-	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	movwi	2[FSR0] 	; copy status to IN buffer
 	retlw	3
 
 _admin_set_serialno	;0x42 05
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	0xC2
-	movwf	BANKED_EP1IN_BUF
+	movwi	0[FSR0]
 	movlw	0x05
-	movwf	BANKED_EP1IN_BUF+1
+	movwi	1[FSR0]
 	movlw	BSTAT_INVALID_COMMAND
-	movwf	BANKED_EP1IN_BUF+2	; copy status to IN buffer
+	movwi	2[FSR0] 	; copy status to IN buffer
 	retlw	3
-
-#ifdef OLD_CODE
-; Used Packet length to determine packet function
-	movlw	0x22   ; Length of the DMX packet
-	subwf	BANKED_EP1OUT_CNT,W
-	bz	_dmx_packet
-
-	movlw	BCMD_SET_PARAMS_LEN
-	subwf	BANKED_EP1OUT_CNT,w
-	bz	_flash_set_params
-
-	movlw	BCMD_WRITE_LEN
-	subwf	BANKED_EP1OUT_CNT,w
-	bz	_flash_write
-
-	movlw	BCMD_RESET_LEN
-	subwf	BANKED_EP1OUT_CNT,w
-	bz	_yada_cmd_reset
-
-	BANKSEL	BANKED_EP1IN_BUF
-	movlw	BSTAT_INVALID_COMMAND
-	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
-	retlw	1
-#endif
 
 _pass_through_packet	; 0x41
 _dmx_packet		; 0x40
@@ -759,10 +735,11 @@ _dmx_skip_loop
 	decfsz	WREG,W
 	goto	_dmx_skip_loop
 _dmx_copy_payload
-	movlw	low EP1OUT_BUF+2
-	movwf	FSR1L
-	movlw	high EP1OUT_BUF
-	movwf	FSR1H
+	addfsr	FSR1,2
+	;movlw	low EP1OUT_BUF+2
+	;movwf	FSR1L
+	;movlw	high EP1OUT_BUF
+	;movwf	FSR1H
 	movlw	0x20
 	; SNEAKY - use BANKED_EP1_OUT_BUF[0] (formerly 0x40) as a temp counter
 	movwf	BANKED_EP1OUT_BUF
@@ -786,15 +763,16 @@ _dmx_led_cnt
 
 ; Resets the device if the received byte matches the reset character.
 _yada_cmd_reset
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	0xC3
-	movwf	BANKED_EP1IN_BUF
+	movwi	0[FSR0]
 	movlw	BSTAT_INVALID_COMMAND
-	movwf	BANKED_EP1IN_BUF+1	; copy status to IN buffer
+	movwi	1[FSR0] 	; copy status to IN buffer
 	
-        BANKSEL BANKED_EP1OUT_BUF
-	movlw	BCMD_RESET_CHAR
-	subwf	BANKED_EP1OUT_BUF+1,w	; check received character
+        ;BANKSEL BANKED_EP1OUT_BUF
+	;movlw	BCMD_RESET_CHAR
+	;subwf	BANKED_EP1OUT_BUF+1,w	; check received character
+	moviw	1[FSR1]
+	sublw	BCMD_RESET_CHAR
 	skpz
 	retlw	2 	; Length of reply 
 ; command is valid, reset the device
@@ -805,9 +783,8 @@ _yada_cmd_reset
 ; the "erase" character.
 ; BSR=0
 _flash_set_params
-	BANKSEL	BANKED_EP1IN_BUF
 	movlw	BSTAT_OK
-	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
+	moviw	0[FSR0] 	; copy status to IN buffer
 
 	BANKSEL BANKED_EP1OUT_BUF
 	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_CKSUM,W	; expected checksum
@@ -879,7 +856,7 @@ _wcksum
 	tstf	FSR1L
 	skpnz 	
 	goto	_oksum
-	BANKSEL	BANKED_EP1IN_BUF
+	BANKSEL	BANKED_EP1IN_BUF ; NOTE: Do not use FSR0 here, as it was revectored above
 	movlw	BSTAT_INVALID_CHECKSUM	; if there's a mismatch, abort the write
 	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
 	retlw	1	; return length of reply packet (1)
