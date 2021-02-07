@@ -276,7 +276,7 @@ InitTX
 	movwf	FSR0H
 	movwf	FSR0_DMXH	
 
-	movlw	0x30		; DEBUG value.. set at 0x00 for initialization
+	movlw	0x00		; DEBUG value.. set at 0x00 for initialization
 CBloop 
 	movwi	FSR0++		; clear the location pointed to by IND0 then increment pointer 
 

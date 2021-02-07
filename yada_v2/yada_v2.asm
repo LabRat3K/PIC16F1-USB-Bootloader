@@ -564,7 +564,7 @@ arm_ep1_out
 	bsf	BANKED_EP1OUT_STAT,UOWN	; rearm OUT buffer
 	return
 
-;;; Executes a bootloader command.
+;;; Execute the application command.
 ;;; arguments:	command payload in EP1 OUT buffer
 ;;; 		BSR=0
 ;;; returns:	status code in W
