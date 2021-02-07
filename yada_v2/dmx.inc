@@ -32,15 +32,23 @@
 ; of the break signal and the spacing between transmitted bytes. 
 ; written to the first data slot in the DMX frame to control a remote 
 ; device. 
-
+;
+; ------------------------------------------------------------------------------------------
+; Updates by LabRat (Andrew Williams) 2020
+;   a. Modified for use on the P16F1455
+;   b. Modified to allow for PASS THROUGH mode (in progress)
+;   c. Modified to use an Irq Handler to deal with large block of data (DMA ish)
+;      Fire & Forget from the applications point of view.
+;   
 ; Exported interfaces are...
-;    DmxIrqHandler
+;    DmxIrqHandler - invoked via 'call' from the application IrqHandler
 ;    DmxTransmit
 ;    DmxSetup
 ; 
 ; The shared memory segment for the DMX Universe
 ;    DmxUniverse 
 ;
+;    ***Note: DmxUniverse can be an imported address.
 ;
 
 #ifdef STANDALONE
