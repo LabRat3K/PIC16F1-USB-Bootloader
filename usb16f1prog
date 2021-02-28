@@ -2,7 +2,8 @@
 #
 # usb16f1prog
 # Copyright (c) 2015, Matt Sarnoff (msarnoff.org)
-# v1.0, February 12, 2015
+# Tweaked by LabRat - Andrew Williams (ratsnest.ca)
+# v1.1, February 12, 2015
 # Released under a 3-clause BSD license: see the accompanying LICENSE file.
 #
 # Uploads firmware to a PIC16F1xxx microcontroller programmed with
@@ -25,21 +26,21 @@
 # - addressHighByte
 # - expectedChecksum
 # - shouldErase
-# addressLowByte/HighByte is the 16-bit word address, aligned to a 32-word
+# addressLowByte/HighByte is the 16-bit word address, aligned to a 16/32-word
 # boundary, where data should be written.
-# expectedChecksum is the 8-bit checksum of the 32 words to be written at the
+# expectedChecksum is the 8-bit checksum of the 16/32 words to be written at the
 # specified address. (This is the 2's complement of the byte-wise sum mod 256
 # of the upcoming 32 words.)
 # If the shouldErase byte is 0x45 ('E'), the flash row at that address is
 # erased. An erase is mandatory before a Write command.
 #
-# Write is 64 bytes long:
+# Write is 32/64 bytes long based on HEX input:
 # - dataWord0LowByte
 # - dataWord0HighByte
 # ...
 # - dataWord31LowByte
 # - dataWord31HighByte
-# In other words, exactly 32 words, little-endian. If less than 32 words are
+# In other words, exactly 16/32 words, little-endian. If less than 32 words are
 # to be written, the sequence should be padded out with 0x3FFF (0xFF, 0x3F).
 # The device may return an error if the checksum of the data does not match
 # the value sent in the last Set Parameters command, or if the values in flash
@@ -54,12 +55,11 @@ import argparse, errno, os, shutil, sys
 from serial import Serial
 from intelhex import IntelHex16bit, IntelHexError
 
-__version__ = '1.0'
-__author__ = 'Matt Sarnoff (msarnoff.org)'
+__version__ = '1.1'
+__author__ = 'Matt Sarnoff (msarnoff.org) with tweaks from Andrew Williams (ratsnest.ca)'
 
 PORT_ENV_VAR = 'USB16F1PROG_PORT'
 CONFIGURATION_WORD_RANGE = range(0x8000*2, 0x8009*2, 2)
-FLASH_ROW_LEN = 32
 
 BCMD_ERASE = 0x45
 BCMD_RESET = 0x52
@@ -81,6 +81,13 @@ LOG_QUIET = 0
 LOG_DEFAULT = 1
 LOG_VERBOSE = 2
 
+# Microprocessor flash write LATCH width (16/32)
+# Default to 32
+latch_width = 32
+
+# Baud Rate - NRF loader uses a real serial connection
+# Default to 15200
+baud = 115200
 
 def low(n):
     return n & 0xFF
@@ -108,7 +115,7 @@ def device_error(status):
 
 def device_set_params(ser, wordaddr, checksum=None):
     log(LOG_VERBOSE, 'Erasing %d words at %04x%s' % (
-        FLASH_ROW_LEN,
+        latch_width,
         wordaddr,
         (', checksum of data to be written is 0x%02x' % checksum) if checksum is not None else ''
     ))
@@ -141,8 +148,8 @@ def main(args):
     global log_level
     
     parser = argparse.ArgumentParser(
-            description='Uploads firmware (in Intel HEX format) to a PIC16F1xxx using Matt Sarnoff\'s USB bootloader.',
-            epilog='If no port is specified using -p, the '+PORT_ENV_VAR+' environment variable is consulted. '+
+            description='Uploads firmware (in Intel HEX format) to a PIC16F18xx using LabRat\'s NRFLoader (based on Matt Sarnoff\'s USB bootloader).',
+            epilog='If no serial port is specified using -p, the '+PORT_ENV_VAR+' environment variable is consulted. '+
             """
             The entire range of application program memory (excluding the bootloader region) is erased
             during the programming process. To preserve the contents of High-Endurance Flash across reprograms,
@@ -172,6 +179,18 @@ def main(args):
             default=8192,
             type=int,
             help='size of the device ROM in words up to 32768 (defaults to 8192)')
+    parser.add_argument('-w', '--latch-width',
+            metavar='WIDTH',
+            type=int,
+            default=32,
+            choices=[16,32],
+            help='write latch width for the PIC microprocesor, 16 or 32 (defaults to 32)')
+    parser.add_argument('-B', '--baud-rate',
+            metavar='BAUD',
+            default=115200,
+            type=int,
+            choices=[9600,19200,38400,57600,115200],
+            help='baud rate for the serial connection, 9600/19200/38400/37600/115200 (defaults to 115200)')
     parser.add_argument('inputfile',
             metavar='inputfile',
             nargs=1,
@@ -181,6 +200,12 @@ def main(args):
     infile = args.inputfile[0]
 
     log_level = args.log_level
+
+    if args.latch_width is not None:
+        latch_width = args.latch_width
+
+    if args.baud_rate is not None:
+        baud = args.baud_rate
 
     if args.port is not None:
         port = args.port
@@ -227,19 +252,19 @@ def main(args):
     # open the serial port
     log(LOG_DEFAULT, 'Opening serial port '+port)
     try:
-        ser = Serial(port, 38400)    # baud doesn't matter
+        ser = Serial(port, baud)   # baud matters for NRF serial link
     except Exception, e:
         exit_with_error(7, e)
 
     failed = False
-    for wordaddr in range(min_address, max_address, FLASH_ROW_LEN):
+    for wordaddr in range(min_address, max_address, latch_width):
         row_in_range = wordaddr >= ih.minaddr() and wordaddr <= ih.maxaddr()
 
         # compute the row checksum
         checksum = None
 
         if row_in_range:
-            words = ih.tobinarray(wordaddr, size=FLASH_ROW_LEN)
+            words = ih.tobinarray(wordaddr, size=latch_width)
             data = reduce(lambda arr,word: arr.extend([low(word), high(word)]) or arr, words, [])
             checksum = -sum(data) & 0xff    # two's complement of lower 8 bits of sum of bytes
 
