@@ -53,6 +53,9 @@ SERIAL_NUMBER_DIGIT_CNT	equ	4
 
 #define LED_MASK_USB 0x08
 #define LED_MASK_DMX 0x04
+#define LED_MASK_PWR 0x10
+
+#define LED_PORT_PWR LATA
 
 ;; ----------------------------
 ;; Code Space Sizes
@@ -220,6 +223,10 @@ main_loop
 	bsf	INTCON,PEIE
 	bsf	INTCON,GIE	; enable interrupts
 
+        ;; initialize timer1
+        movlw   (1 << TMR1ON)   ; turn on Timer1 (aiming at every 5 ms tick)
+        movwf   T1CON
+
 	BANKSEL LATA
 	bcf	LED_PWR ; PWR LED ON 
 	bsf	LED_USB ; USB LED OFF
@@ -239,6 +246,10 @@ _loop
         BANKSEL BUTTON_PORT
         btfss   BUTTON  ; Is the button pressed?
 	goto	_handle_reset
+
+        BANKSEL PIR1
+        btfsc   PIR1, TMR1IF
+        call    led_handler
 
 	goto	_loop
 
@@ -768,6 +779,7 @@ _admin_set_serialno	;0x42 05
 	retlw	3
 
 _pass_through_packet	; 0x41
+ ; LABRAT -TO DO - Handle a single USB-->DMX bus transmission
 _dmx_packet		; 0x40
 	movlw	high DmxUniverse
 	movwf	FSR0H
@@ -996,6 +1008,35 @@ _usben
 	PAGESEL $
 
 	goto	main_loop
+
+; Handle a TIMER1 Reset Event (approx evey 5ms)
+reset_timer1
+        BANKSEL TMR1 ; BANK 0
+        movlw   0x15
+        movwf   TMR1H
+        movlw   0xA0
+        movwf   TMR1L
+        bcf     PIR1, TMR1IF
+        return
+
+; LED Event Handling
+; Use TMR1 roll over event (@200Hz) to blink power LED at 1HZ
+; This allows the operator to recognize APP execution vs
+; BOOTLOADER execution.
+;
+led_handler
+     ; Code to handle an LED "tick" event
+        call reset_timer1
+        decfsz PWR_BLINK,F
+        return
+
+        movlw   .200
+        movwf   PWR_BLINK  ; Setup a 1s LED status polling loop
+
+        movlw   LED_MASK_PWR  ; Power LED MASK
+        BANKSEL LED_PORT_PWR
+        xorwf   LED_PORT_PWR,F ; Toggle the LED status
+        return
 
 
 ;;; Gets the application's power config byte and stores it in APP_POWER_CONFIG.
