@@ -21,11 +21,11 @@ ASM = bootloader.asm
 SERIAL_NUMBER=1
 
 # (use `make list-devices` if not known)
-AS_DEVICE = p16f1454
+AS_DEVICE = p16f1455
 
 # The MDB-specific part number of the chip, used for programming with MDB
 # (should be the actual PIC part number, e.g. PIC16LF1454)
-MDB_DEVICE = PIC16F1454
+MDB_DEVICE = PIC16F1455
 
 
 
