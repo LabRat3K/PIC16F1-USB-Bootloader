@@ -43,19 +43,23 @@ SERIAL_NUMBER_DIGIT_CNT	equ	4
 #define BUTTON_PORT PORTA
 #define BUTTON  PORTA,3
 
-#define LED_PWR  LATA,4
-#define LED_USB  LATC,3
-#define LED_DMX  LATC,2
+	; GREEN LED - LATA,4
+	#define LED_PWR  LATA,4
+	#define LED_DIR_PWR TRISA,4
+	#define LED_MASK_PWR 0x10
+	#define LED_PORT_PWR LATA
 
-#define LED_PWR_DIR TRISA,4
-#define LED_USB_DIR TRISC,3
-#define LED_DMX_DIR TRISC,2
+	; USB LED - LATC,3
+	#define LED_USB  LATC,3
+	#define LED_DIR_USB TRISC,3
+	#define LED_MASK_USB 0x08
+	#define LED_PORT_USB LATC
 
-#define LED_MASK_USB 0x08
-#define LED_MASK_DMX 0x04
-#define LED_MASK_PWR 0x10
-
-#define LED_PORT_PWR LATA
+	; DMX LED - LATC,2
+	#define LED_DMX  LATC,2
+	#define LED_DIR_DMX TRISC,2
+	#define LED_MASK_DMX 0x04
+	#define LED_PORT_DMX LATC
 
 ;; ----------------------------
 ;; Code Space Sizes
@@ -810,8 +814,8 @@ _dmx_led_cnt
 	movlw	44
 	movwf	USB_BLINK
 	movlw	LED_MASK_USB 
-	BANKSEL	LATC
-	xorwf	LATC,F
+	BANKSEL	LED_PORT_USB
+	xorwf	LED_PORT_USB,F
 	goto	_dmx_copy_payload
 
 ; Resets the device if the received byte matches the reset character.
@@ -962,9 +966,9 @@ ret	return
 ; Now entering application code: initialize the USB interface and wait for commands.
 _app_main
         BANKSEL TRISA ; BANK 1
-        bcf     LED_PWR_DIR
-        bcf     LED_USB_DIR
-        bcf     LED_DMX_DIR
+        bcf     LED_DIR_PWR
+        bcf     LED_DIR_USB
+        bcf     LED_DIR_DMX
 
         bcf     TRISC,4 ; EUSART - TX
         bsf     TRISC,5 ; EUSART - RX 

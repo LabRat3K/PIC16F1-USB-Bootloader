@@ -71,7 +71,6 @@
 
 #define DMX_BREAK_PIN 	LATA,5
 #define DMX_BREAK_DIR	TRISA,5
-#define DMX_LED_MASK    0x04
 
 ; Variables memory allocation  
 ;;dmxdata UDATA
@@ -150,9 +149,9 @@ SENDBREAK
 	clrf	DMX_SOF_BYTE	; Default SOF byte
 	clrf	YADA_STATUS	; Default SOF byte
 
-	movlw	DMX_LED_MASK
-	BANKSEL LATC 		; BANK 2
-	xorwf	LATC,F			; Turn on DMX LED,F
+	movlw	LED_MASK_DMX
+	BANKSEL LED_PORT_DMX 	; BANK 2
+	xorwf	LED_PORT_DMX,F	; Toggle DMX LED
 
 	return 
  
