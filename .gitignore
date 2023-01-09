@@ -1,6 +1,7 @@
 *.swp
 *.lst
 *.cod
+*.hex
 MPLABXLog.*
 *.o
 import_list.inc
