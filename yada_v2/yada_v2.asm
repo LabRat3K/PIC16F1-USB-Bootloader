@@ -120,7 +120,7 @@ EP1_IN_BUF_SIZE		equ	64	; endpoint 1 IN (CDC data) buffer size
 ;  <unused in bank>   0x2076     0x096
 ; EP1OUT_BUF          0x20A0     0x120..0x15F   BANKED_EP1OUT_BUF  Size:64
 
-; DmxUniverse         0x22E0..23EF (see NOTE below)
+; DmxUniverse         0x21F0..23EF (see NOTE below)
 
 USB_STATE		equ	BANKED_EP2OUT+0
 EP0_DATA_IN_PTR		equ	BANKED_EP2OUT+1	; pointer to descriptor to be sent (low byte only)
@@ -156,8 +156,8 @@ USED_RAM_LEN		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE-BDT_START
 ;; ----------------------------
 ;; RAM Block to Hold DMX Buffer
 ;; ----------------------------
-;; NOTE NOTE NOTE : Linkes shows linear block ends at 0x23EF.. so move DmxUniverse starting point 16 bytes earlier
-DmxUniverse		equ	(0x2200-0x10)
+;; NOTE NOTE NOTE : Datasheet error - the 512 linear block starts at 0x21F0 NOT at 0x2200. 
+DmxUniverse		equ	(0x21F0)
 
 ; ----------------------
 ; YADA Operational Flags
