@@ -76,7 +76,7 @@ USB_VENDOR_ID          equ     0x04D8
 USB_PRODUCT_ID         equ     0xEBC2
 
 ; -------------------------------
-; Descriptor Lengths & Locations
+; Descriptor Lengths 
 ; -------------------------------
 DEVICE_DESC_LEN		equ	18	; device descriptor length
 CONFIG_DESC_TOTAL_LEN	equ	32	; total length of configuration descriptor
@@ -86,10 +86,42 @@ ALL_DESCS_TOTAL_LEN	equ	DEVICE_DESC_LEN+CONFIG_DESC_TOTAL_LEN+SERIAL_NUM_DESC_LE
 
 EP0_BUF_SIZE 		equ	16	; endpoint 0 buffer size
 EP1_OUT_BUF_SIZE	equ	64	; endpoint 1 OUT (CDC data) buffer size
-EP1_IN_BUF_SIZE		equ	16	; endpoint 1 IN (CDC data) buffer size 
+EP1_IN_BUF_SIZE		equ	64	; endpoint 1 IN (CDC data) buffer size 
 
+; -------------------------------
+; Descriptor Locations
+; -------------------------------
 ; Since we're only using 5 endpoints, use the 4 bytes normally occupied by the 
 ; EP2 OUT buffer descriptor for variables,and the BDT area for buffers.
+; Memory Map
+; ----------------+------------+-------+--------------+-----------------------+
+; Variable        |   LINEAR   | BANKED|  Banked Var  | Comment               |
+; ----------------+------------+-------+--------------+-----------------------+
+;
+; BDT_START           0x2000     0x020   
+; EP0OUT              0x2000     0x020..23   BANKED_EP0IN
+; EP0IN               0x2004     0x024..27   BANKED_EP0OUT
+; EP1OUT              0x2008     0x028..2B   BANKED_EP1IN
+; EP1INT              0x200C     0x02C..2F   BANKED_EP1OUT
+; EP2OUT              0x2010     0x030   BANKED_EP2IN  Used for variable storage
+;                     0x2015     0x030   USB_STATE
+;                     0x2016     0x031   EP0_DATA_IN_PTR  low byte only
+;                     0x2017     0x032   EP0_DATA_IN_COUNT
+;                     0x2018     0x033   APP_POWER_CONFIG
+; EP2IN               0x2014     0x034   BANKED_EP2IN Used for EP buffers
+; EP0OUT_BUF          0x2014     0x034..43   BANKED_EP0OUT_BUF  Size:16
+; EP0IN_BUF           0x2024     0x044..54   BANKED_EP0IN_BUF   Size:16
+; 		      0x2035     0x055   EXPECTED_CHECKSUM  Size:1
+; EP1IN_BUF           0x2036     0x056..95   BANKED_EP1IN_BUF   Size:64
+;------------Boundary 0x204f     0x06F ------------------
+;
+;------------Bounday  0x2050     0xA9
+;  *** Crossed Bank Boundary ***
+;  <unused in bank>   0x2076     0x096
+; EP1OUT_BUF          0x20A0     0x120..0x15F   BANKED_EP1OUT_BUF  Size:64
+
+; DmxUniverse         0x2200..23FF
+
 USB_STATE		equ	BANKED_EP2OUT+0
 EP0_DATA_IN_PTR		equ	BANKED_EP2OUT+1	; pointer to descriptor to be sent (low byte only)
 EP0_DATA_IN_COUNT	equ	BANKED_EP2OUT+2	; remaining bytes to be sent
@@ -107,8 +139,9 @@ EXPECTED_CHECKSUM	equ	BANKED_EP0IN_BUF+EP0_BUF_SIZE	; for saving expected checks
 EP1IN_BUF		equ	EP0IN_BUF+EP0_BUF_SIZE+EXTRA_VARS_LEN
 BANKED_EP1IN_BUF	equ	BANKED_EP0IN_BUF+EP0_BUF_SIZE+EXTRA_VARS_LEN
 
-EP1OUT_BUF		equ	0x2050 	;EP1IN_BUF+EP1_IN_BUF_SIZE	; only use 1 byte for EP1 IN
-BANKED_EP1OUT_BUF	equ	0xA0	;BANKED_EP1IN_BUF+EP1_IN_BUF_SIZE
+; Hard code to align with start of BANK 
+EP1OUT_BUF		equ	0x20A0 	; 64 byte out buffer
+BANKED_EP1OUT_BUF	equ	0x120;
 
 ; High byte of all endpoint buffers.
 EPBUF_ADRH		equ	(EP0OUT_BUF>>8)
@@ -123,7 +156,7 @@ USED_RAM_LEN		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE-BDT_START
 ;; ----------------------------
 ;; RAM Block to Hold DMX Buffer
 ;; ----------------------------
-DmxUniverse		equ	0x2200
+DmxUniverse		equ	0x2200-16
 
 ; -------------------
 ; USB_STATE bit flags
@@ -167,6 +200,20 @@ _app_interrupt
         call	DmxIrqHandler
         PAGESEL _app_interrupt
 
+	; Check for incoming UART interrupt
+	;
+	; If NO RX jump to _dmx_irq_done  - check for USB events
+ 	;   - Call UART_RX_HANDLER
+	;     PAGESEL _app_interrupt ; restore back to IRQ handling
+	; 
+	; The UART_RX_HANDLER
+ 	;    State jump to action.. 
+	;      Did we see break? Move to Wait for Start
+          ;    Wait For Start - did we see Start? Move to RxData
+ 	  ;    RxData - copy byte into array
+	  ;    Clear the Interrupt
+	  ;    Return
+  	
 _dmx_irq_done
 	if USB_INTERRUPTS
 	else
@@ -623,6 +670,10 @@ _yada_cmd
 	sublw	0x43			; Is Reset Request?
 	bz	_yada_cmd_reset
 
+	moviw	0[FSR1]
+	sublw	0x44			; Is Reset Request?
+	bz	_dmx_in 
+
 	movlw	BSTAT_INVALID_COMMAND
 	movwi	0[FSR0]	; copy status to IN buffer
 	retlw	1
@@ -782,12 +833,49 @@ _admin_set_serialno	;0x42 05
 	movwi	2[FSR0] 	; copy status to IN buffer
 	retlw	3
 
+_dmx_in
+	moviw  	1[FSR1] ; Copy index from EP1_OUT
+	movwi	1[FSR0] ; EP1_IN
+	; Don't need the EP_OUT anymore
+	movlw	HIGH DmxUniverse
+	movwf	FSR1H
+	movlw	LOW DmxUniverse
+	movwf	FSR1L
+	moviw	1[FSR0]   ; If DMX & 1st packet of frame..
+	bz	_dmx_in_cnt
+_dmx_in_skip_loop
+	addfsr	FSR1, 16	; Multiplication/Addition loop (32 x # )
+	addfsr	FSR1, 16
+	decfsz	WREG,W
+	goto	_dmx_in_skip_loop;
+_dmx_in_copy_payload
+	addfsr	FSR0,2
+	movlw	0x20
+	; Use GLOBAL for countdown 
+	movwf	TEMP
+_dmx_in_copy_loop
+	moviw	FSR1++   ; Could be made a function - Copy from  RAM to USB
+	movwi	FSR0++
+	decfsz	TEMP,F
+	goto	_dmx_in_copy_loop
+	retlw	0x22	; *** 34 Byte Reply ***
+
+_dmx_in_cnt
+	decfsz	USB_BLINK,F
+	goto	_dmx_in_copy_payload
+	movlw	44
+	movwf	USB_BLINK
+	movlw	LED_MASK_USB 
+	BANKSEL	LED_PORT_USB
+	xorwf	LED_PORT_USB,F
+	goto	_dmx_in_copy_payload
+
 _pass_through_packet	; 0x41
  ; LABRAT -TO DO - Handle a single USB-->DMX bus transmission
 _dmx_packet		; 0x40
-	movlw	high DmxUniverse
+	movlw	HIGH DmxUniverse
 	movwf	FSR0H
-	movlw	low DmxUniverse
+	movlw	LOW DmxUniverse
 	movwf	FSR0L
 	moviw	1[FSR1]   ; If DMX & 1st packet of frame..
 	bz	_dmx_led_cnt
@@ -809,6 +897,7 @@ _dmx_copy_loop
 	retlw	0x00	; *** ZERO LENGTH REPLY ***
 
 _dmx_led_cnt
+	goto	_dmx_copy_payload
 	decfsz	USB_BLINK,F
 	goto	_dmx_copy_payload
 	movlw	44
@@ -1067,6 +1156,7 @@ usb_init
 	clrf	UEIR
 	clrf	UIR
 ; disable endpoints we won't use
+	clrf	UEP2
 	clrf	UEP3
 	clrf	UEP4
 	clrf	UEP5
@@ -1201,7 +1291,7 @@ ENDPOINT_DESCRIPTOR_1_IN
 	dt	0x05		; bDescriptorType (ENDPOINT)
 	dt	0x81		; bEndpointAddress (1 IN)
 	dt	0x02		; bmAttributes (transfer type: bulk)
-	dt	low EP1_IN_BUF_SIZE, 0x00	; wMaxPacketSize (16)
+	dt	low EP1_IN_BUF_SIZE, 0x00	; wMaxPacketSize (64)
 	dt	0x00		; bInterval
 
 ; extract nibbles from serial number
