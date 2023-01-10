@@ -92,14 +92,6 @@
 	error "Bank 0 Global  Variable Space overrun"
  endif
 
-;	YADA_STATUS FLAGS
-;
-;	Bit 0 - 0x01 -   Mode  0 = DMX  1 = PASSTHROUGH
-;       Bit 7 - 0x80 -   Buffer Mode 0 = available 1 = Busy
-;
-YADA_MODE_BIT	equ	(0)
-YADA_BUSY_BIT	equ	(7)
-
 ;DmxUniverse equ 0x2200 ; 512 bytes of DMX Universe Values
 
 ;**************************************************************************************** 
@@ -147,7 +139,7 @@ SENDBREAK
 	movwf	DMX_BLINK
 
 	clrf	DMX_SOF_BYTE	; Default SOF byte
-	clrf	YADA_STATUS	; Default SOF byte
+	clrf	YADA_STATUS	; Default STATUS bits
 
 	movlw	LED_MASK_DMX
 	BANKSEL LED_PORT_DMX 	; BANK 2

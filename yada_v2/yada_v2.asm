@@ -76,7 +76,7 @@ USB_VENDOR_ID          equ     0x04D8
 USB_PRODUCT_ID         equ     0xEBC2
 
 ; -------------------------------
-; Descriptor Lengths 
+; Descriptor Lengths
 ; -------------------------------
 DEVICE_DESC_LEN		equ	18	; device descriptor length
 CONFIG_DESC_TOTAL_LEN	equ	32	; total length of configuration descriptor
@@ -86,19 +86,19 @@ ALL_DESCS_TOTAL_LEN	equ	DEVICE_DESC_LEN+CONFIG_DESC_TOTAL_LEN+SERIAL_NUM_DESC_LE
 
 EP0_BUF_SIZE 		equ	16	; endpoint 0 buffer size
 EP1_OUT_BUF_SIZE	equ	64	; endpoint 1 OUT (CDC data) buffer size
-EP1_IN_BUF_SIZE		equ	64	; endpoint 1 IN (CDC data) buffer size 
+EP1_IN_BUF_SIZE		equ	64	; endpoint 1 IN (CDC data) buffer size
 
 ; -------------------------------
 ; Descriptor Locations
 ; -------------------------------
-; Since we're only using 5 endpoints, use the 4 bytes normally occupied by the 
+; Since we're only using 5 endpoints, use the 4 bytes normally occupied by the
 ; EP2 OUT buffer descriptor for variables,and the BDT area for buffers.
 ; Memory Map
 ; ----------------+------------+-------+--------------+-----------------------+
 ; Variable        |   LINEAR   | BANKED|  Banked Var  | Comment               |
 ; ----------------+------------+-------+--------------+-----------------------+
 ;
-; BDT_START           0x2000     0x020   
+; BDT_START           0x2000     0x020
 ; EP0OUT              0x2000     0x020..23   BANKED_EP0IN
 ; EP0IN               0x2004     0x024..27   BANKED_EP0OUT
 ; EP1OUT              0x2008     0x028..2B   BANKED_EP1IN
@@ -120,7 +120,7 @@ EP1_IN_BUF_SIZE		equ	64	; endpoint 1 IN (CDC data) buffer size
 ;  <unused in bank>   0x2076     0x096
 ; EP1OUT_BUF          0x20A0     0x120..0x15F   BANKED_EP1OUT_BUF  Size:64
 
-; DmxUniverse         0x2200..23FF
+; DmxUniverse         0x22E0..23EF (see NOTE below)
 
 USB_STATE		equ	BANKED_EP2OUT+0
 EP0_DATA_IN_PTR		equ	BANKED_EP2OUT+1	; pointer to descriptor to be sent (low byte only)
@@ -139,7 +139,7 @@ EXPECTED_CHECKSUM	equ	BANKED_EP0IN_BUF+EP0_BUF_SIZE	; for saving expected checks
 EP1IN_BUF		equ	EP0IN_BUF+EP0_BUF_SIZE+EXTRA_VARS_LEN
 BANKED_EP1IN_BUF	equ	BANKED_EP0IN_BUF+EP0_BUF_SIZE+EXTRA_VARS_LEN
 
-; Hard code to align with start of BANK 
+; Hard code to align with start of BANK
 EP1OUT_BUF		equ	0x20A0 	; 64 byte out buffer
 BANKED_EP1OUT_BUF	equ	0x120;
 
@@ -156,7 +156,32 @@ USED_RAM_LEN		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE-BDT_START
 ;; ----------------------------
 ;; RAM Block to Hold DMX Buffer
 ;; ----------------------------
-DmxUniverse		equ	0x2200-16
+;; NOTE NOTE NOTE : Linkes shows linear block ends at 0x23EF.. so move DmxUniverse starting point 16 bytes earlier
+DmxUniverse		equ	(0x2200-0x10)
+
+; ----------------------
+; YADA Operational Flags
+; ----------------------
+;       YADA_STATUS FLAGS
+;
+;       Bit 0 - 0x01 -   Mode  0 = DMX  1 = PASSTHROUGH
+;       Bit 1 - 0x02 -   DMX Direction 0 = DMXIN  1 = DMXOUT
+;       Bit 7 - 0x80 -   Buffer Mode 0 = available 1 = Busy
+;
+#define YADA_MODE_BIT 0
+#define YADA_MODE_MASK (1<<YADA_MODE_BIT)
+  #define MODE_DMX  (0x00)
+  #define MODE_PASS (0x01
+
+#define YADA_DIR_BIT 1
+#define YADA_DIR_MASK (1<< YADA_DIR_BIT)
+  #define YADA_DIR_TX   (0x02)
+  #define YADA_DIR_RX   (0x00)
+
+#define YADA_BUSY_BIT 7
+#define YADA_BUSY_MASK (1<<7)
+  #define BUFF_AVAILABLE (0x00)
+  #define BUFF_BUSY      (0x80)
 
 ; -------------------
 ; USB_STATE bit flags
@@ -165,9 +190,9 @@ IS_CONTROL_WRITE	equ	0	; current endpoint 0 transaction is a control write
 ADDRESS_PENDING		equ	1	; need to set address in next IN transaction
 DEVICE_CONFIGURED	equ	2	; the device is configured
 
-; - - - - - - - - - - - - - - 
+; - - - - - - - - - - - - - -
 ; API from bootloader
-; - - - - - - - - - - - - - - 
+; - - - - - - - - - - - - - -
   org APP_ENTRY_POINT
   PAGESEL _app_main
   goto    _app_main
@@ -181,7 +206,7 @@ DEVICE_CONFIGURED	equ	2	; the device is configured
   call    _app_interrupt
   retfie
 
-; - - - - - - - - - - - - - - 
+; - - - - - - - - - - - - - -
 
 _app_config
 	retlw	0x0a
@@ -189,7 +214,7 @@ _app_config
 
 _app_interrupt
         BANKSEL PIE1
-        btfss   PIE1,TXIE   ; Are we IRQ enabled 
+        btfss   PIE1,TXIE   ; Are we IRQ enabled
         goto    _dmx_irq_done
 
         BANKSEL PIR1
@@ -202,18 +227,20 @@ _app_interrupt
 
 	; Check for incoming UART interrupt
 	;
+	; btfss  YADA_STATUS,YADA_MODE_RX
+	; goto	_dmx_irq_done
 	; If NO RX jump to _dmx_irq_done  - check for USB events
  	;   - Call UART_RX_HANDLER
 	;     PAGESEL _app_interrupt ; restore back to IRQ handling
-	; 
+	;
 	; The UART_RX_HANDLER
- 	;    State jump to action.. 
+ 	;    State jump to action..
 	;      Did we see break? Move to Wait for Start
           ;    Wait For Start - did we see Start? Move to RxData
  	  ;    RxData - copy byte into array
 	  ;    Clear the Interrupt
 	  ;    Return
-  	
+
 _dmx_irq_done
 	if USB_INTERRUPTS
 	else
@@ -267,7 +294,7 @@ _ucdc
 
 
 ; -------------------------------
-; Main Loop - this is the inner 
+; Main Loop - this is the inner
 ; tight loop for the application
 ; -------------------------------
 main_loop
@@ -279,7 +306,7 @@ main_loop
         movwf   T1CON
 
 	BANKSEL LATA
-	bcf	LED_PWR ; PWR LED ON 
+	bcf	LED_PWR ; PWR LED ON
 	bsf	LED_USB ; USB LED OFF
 	bsf	LED_DMX ; DMX LED OFF
 
@@ -383,7 +410,7 @@ _usb_ctrl_complete
 	goto	_cwrite
 ; this is a control read; prepare the IN endpoint for the data stage
 ; and the OUT endpoint for the status stage
-_cread	
+_cread
 	call	ep0_read_in		; read data into IN buffer
 	movlw	_DAT1|_DTSEN		; OUT buffer will be ready for status stage
 ; value in W is used to specify the EP0 OUT flags
@@ -433,7 +460,7 @@ _string_descriptor
 ; Check wValueL for which string descriptor is requested
 	movf    BANKED_EP0OUT_BUF+wValueL,w
 	bz	_string_sd000  ;0x00
-        decf	WREG,W	
+        decf	WREG,W
 	bz	_string_mfg    ; 0x01
 	decf	WREG,W
 	bz	_string_prod   ; 0x02
@@ -448,7 +475,7 @@ _string_mfg
 _string_prod
 	movlw	low sd002
 	movwf	EP0_DATA_IN_PTR
-	movlw 	IPROD_SIZE	
+	movlw 	IPROD_SIZE
 	goto	_set_data_in_count_from_w
 
 _string_serial
@@ -462,7 +489,7 @@ _string_sd000
 	movwf	EP0_DATA_IN_PTR
 	movlw	0x04
 
- 	;Drop through	
+ 	;Drop through
 
 _set_data_in_count_from_w
 	movwf	EP0_DATA_IN_COUNT
@@ -521,7 +548,7 @@ _usb_ctrl_in
 	btfss	BANKED_EP0IN_STAT,DTS	; toggle DTS
 	bsf	WREG,DTS
 	goto	arm_ep0_in_with_flags	; arm the IN buffer
-	
+
 ; if this is the status stage of a Set Address request, assign the address here.
 ; The OUT buffer has already been armed for the next SETUP.
 _check_for_pending_address
@@ -636,12 +663,12 @@ arm_ep1_out
 ;	0 - DMX data - if MODE = 0, apply to DmxUniverse
 ;	    Note: Fixed payload length - 32 bytes + 2 byte overhead
 ;           Reply: None - keep the bandwidth clear.
-;	1 - Passthrough Data - if MODE =1 & Buffer Available - copy data 
+;	1 - Passthrough Data - if MODE =1 & Buffer Available - copy data
 ;           Note: Variabe length data payload (1 to 63)
 ;           Reply <C1> - ACK
-;	2 - Admin : <00> - Set Mode DMX : <SOF-Byte> 
+;	2 - Admin : <00> - Set Mode DMX : <SOF-Byte>
 ;                          Reply <C2> <00> <00/01> - ACK/NACK
-;	            <01> - Set Mode PassThrough : <SOF-Byte> 
+;	            <01> - Set Mode PassThrough : <SOF-Byte>
 ;                          Reply <C2> <01> <00/01> - ACK/NACK
 ;                   <02> - Query Device <MAJ>.<MIN>, <DevIdH><DevIdL>
 ;                          Reply <C2> <02> <MAJ>.<MIN>, <DevIdH><DevIdL>
@@ -672,19 +699,19 @@ _yada_cmd
 
 	moviw	0[FSR1]
 	sublw	0x44			; Is Reset Request?
-	bz	_dmx_in 
+	bz	_dmx_in
 
 	movlw	BSTAT_INVALID_COMMAND
 	movwi	0[FSR0]	; copy status to IN buffer
 	retlw	1
-	
+
 
 _admin_packet
 	; 0x42 00 <SOF>
 	moviw	1[FSR1]			; Set Mode DMX?
 	bz	_admin_set_dmx
 
-	; 0x42 01 <SOF> 
+	; 0x42 01 <SOF>
 	decf	WREG,W			; Set Mode to Passthrough?
 	bz	_admin_set_passthrough
 
@@ -696,11 +723,11 @@ _admin_packet
 	decf	WREG,W			; Qry Device Serial No.
 	bz	_admin_qry_serial
 
-	; 0x42 04 <0xYY> <0xYY> <0xYY> <0xYY> 
+	; 0x42 04 <0xYY> <0xYY> <0xYY> <0xYY>
 	decf	WREG,W			; Set Device INFO
 	bz	_admin_set_devinfo
 
-	; 0x42 05 <0xYY> <0xYY> <0xYY> <0xYY> 
+	; 0x42 05 <0xYY> <0xYY> <0xYY> <0xYY>
 	decf	WREG,W			; Set SerialNo
 	bz	_admin_set_serialno
 
@@ -741,7 +768,7 @@ _admin_qry_device ; 0x42 03
 	movlw	4
 	movwf	TEMP
 	; ------ READ FROM THE DEVID MEMORY LOCATIONSNKSEL PMADRL ; Select correct Bank
-	; User ID 
+	; User ID
 	; 0x8000   <DEV TYPE>:<HW_MSB>
 	; 0x8001   <UNUSED>:<HW_LSB>
 	; 0x8002   <UNUSED>:<DEVID_MSB>
@@ -755,7 +782,7 @@ _qry_loop
 	bcf 	INTCON,GIE	; Disable interrupts
 	bsf 	PMCON1,RD 	; Initiate read
 	nop 			; REQUIRES 2 NOP instructions
-	nop 
+	nop
 	bsf 	INTCON,GIE 	; Restore interrupts
 	movf	PMDATH,W 	; Get MSB of word
 	movwi	FSR0++
@@ -812,7 +839,7 @@ _set_dev_loop
 	movwf	PMDATH
 	moviw	FSR1++
 	movwf	PMDATL
-	call	flash_unlock	
+	call	flash_unlock
 	incf	PMADRL,F
 	decfsz	TEMP,F
 	goto	_set_dev_loop
@@ -851,7 +878,7 @@ _dmx_in_skip_loop
 _dmx_in_copy_payload
 	addfsr	FSR0,2
 	movlw	0x20
-	; Use GLOBAL for countdown 
+	; Use GLOBAL for countdown
 	movwf	TEMP
 _dmx_in_copy_loop
 	moviw	FSR1++   ; Could be made a function - Copy from  RAM to USB
@@ -865,7 +892,7 @@ _dmx_in_cnt
 	goto	_dmx_in_copy_payload
 	movlw	44
 	movwf	USB_BLINK
-	movlw	LED_MASK_USB 
+	movlw	LED_MASK_USB
 	BANKSEL	LED_PORT_USB
 	xorwf	LED_PORT_USB,F
 	goto	_dmx_in_copy_payload
@@ -887,7 +914,7 @@ _dmx_skip_loop
 _dmx_copy_payload
 	addfsr	FSR1,2
 	movlw	0x20
-	; Use GLOBAL for countdown 
+	; Use GLOBAL for countdown
 	movwf	TEMP
 _dmx_copy_loop
 	moviw	FSR1++
@@ -902,7 +929,7 @@ _dmx_led_cnt
 	goto	_dmx_copy_payload
 	movlw	44
 	movwf	USB_BLINK
-	movlw	LED_MASK_USB 
+	movlw	LED_MASK_USB
 	BANKSEL	LED_PORT_USB
 	xorwf	LED_PORT_USB,F
 	goto	_dmx_copy_payload
@@ -913,11 +940,11 @@ _yada_cmd_reset
 	movwi	0[FSR0]
 	movlw	BSTAT_INVALID_COMMAND
 	movwi	1[FSR0] 	; copy status to IN buffer
-	
+
 	moviw	1[FSR1]	; check received character
 	sublw	BCMD_RESET_CHAR
 	skpz
-	retlw	2 	; Length of reply 
+	retlw	2 	; Length of reply
 ; command is valid, reset the device
 	lcall	_handle_reset
 
@@ -936,7 +963,7 @@ _flash_set_params
 	movwf	FSR1L		; temp
 	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ADRL,W	; address lower bits
 	movwf	FSR1H		; temp
-	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ADRH,W	; address upper bits 
+	movf	BANKED_EP1OUT_BUF+BCMD_SET_PARAMS_ADRH,W	; address upper bits
 	BANKSEL	PMADRH
 	movwf	PMADRH
 	movf	FSR1H,W		; bring lower bits out of temp
@@ -994,10 +1021,10 @@ _wloop
 	incf	PMADRL,f		; increment write address
 	goto	_wloop
 ; verify the checksum
-_wcksum	
+_wcksum
 	clrf	PMCON1
 	tstf	FSR1L
-	skpnz 	
+	skpnz
 	goto	_oksum
 	BANKSEL	BANKED_EP1IN_BUF ; NOTE: Do not use FSR0 here, as it was revectored above
 	movlw	BSTAT_INVALID_CHECKSUM	; if there's a mismatch, abort the write
@@ -1026,7 +1053,7 @@ _vloop	bsf	PMCON1,RD		; read word from flash
 	skpnz
 	goto	_verifyok
 	BANKSEL	BANKED_EP1IN_BUF
-	movlw	BSTAT_VERIFY_FAILED	; reply with verify failed message 
+	movlw	BSTAT_VERIFY_FAILED	; reply with verify failed message
 	movwf	BANKED_EP1IN_BUF	; copy status to IN buffer
 	retlw	1	; return length of reply packet (1)
 _verifyok
@@ -1060,7 +1087,7 @@ _app_main
         bcf     LED_DIR_DMX
 
         bcf     TRISC,4 ; EUSART - TX
-        bsf     TRISC,5 ; EUSART - RX 
+        bsf     TRISC,5 ; EUSART - RX
 
         BANKSEL LATA ; BANK 2
         bcf     LED_PWR ; GREEN ; Turn ON  PWR LED
@@ -1175,7 +1202,7 @@ usb_init
 	movlw	USED_RAM_LEN
 	movwf	FSR1H		; loop count
 	movlw	0
-_ramclr	
+_ramclr
 	movwi	FSR0++
 	decfsz	FSR1H,f
 	goto	_ramclr
@@ -1188,7 +1215,7 @@ _ramclr
 	bcf	UCON,PKTDIS	; enable packet processing
 	bcf	UCON,PPBRST	; clear ping-pong buffer reset flag
 ; flush pending transactions
-_tflush	
+_tflush
 	btfss	UIR,TRNIF
 	goto	_initep
 	bcf	UIR,TRNIF
@@ -1201,7 +1228,7 @@ _tflush
 ; my intuition was that I should wait until a SET_CONFIGURATION is received
 ; before setting up endpoints 1 and 2... but there seemed to be a timing issue
 ; when doing so, so I moved them here
-_initep	
+_initep
 	movlw	(1<<EPHSHK)|(1<<EPOUTEN)|(1<<EPINEN)
 	movwf	UEP0
 	movlw	(1<<EPHSHK)|(1<<EPCONDIS)|(1<<EPOUTEN)|(1<<EPINEN)
@@ -1227,7 +1254,7 @@ _initep
 	include "dmx.inc"
 
 
-;;; Descriptors 
+;;; Descriptors
 
 ; Place all the descriptors at the end of the bootloader region.
 ; This serves 2 purposes: 1) as long as the total length of all descriptors is
@@ -1245,7 +1272,7 @@ DEVICE_DESCRIPTOR
 	dt	EP0_BUF_SIZE	; bMaxPacketSize0 (8 bytes)
 	dt	low USB_VENDOR_ID,  high USB_VENDOR_ID	; idVendor
 	dt	low USB_PRODUCT_ID, high USB_PRODUCT_ID	; idProduct
-	dt	0x01, 0x00	; bcdDevice (1) 
+	dt	0x01, 0x00	; bcdDevice (1)
 	dt	0x01		; iManufacturer
 	dt	0x02		; iProduct
 	dt	0x03		; iSerialNumber
@@ -1259,7 +1286,7 @@ CONFIGURATION_DESCRIPTOR
 	dt	0x01		; bConfigurationValue
 	dt	0x00		; iConfiguration
 	dt	0x80		; bmAttributes
-	dt	0x32		; bMaxPower 
+	dt	0x32		; bMaxPower
 
 INTERFACE_DESCRIPTOR_0
 	dt	0x09		; bLength
@@ -1313,7 +1340,7 @@ SERIAL_NUMBER_STRING_DESCRIPTOR
 sd000
 	dt	0x04			; sizeof(SD000)
 	dt	0x03			; DSC_STR
-	dt	0x09, 0x04		; 
+	dt	0x09, 0x04		;
 
 ; Using String 1 for Manufactured String Index
 IMFG_SIZE 	equ	0x18
