@@ -21,6 +21,11 @@ INC = dmx.inc
 # (use `make list-devices` if not known)
 AS_DEVICE = 16f1455
 
+# Environment Variables (SerialNo) passed in
+ifdef SERIAL_NUMBER
+SERNUM = -DSERIAL_NUMBER=${SERIAL_NUMBER}
+endif
+
 
 ########## Build settings ##########
 
@@ -36,7 +41,7 @@ HEX = $(OUT).hex
 
 # Link
 $(HEX): $(ASM) $(INC)
-	$(AS) -I .. -p$(AS_DEVICE) -o $@ $<
+	$(AS) -I .. -p$(AS_DEVICE) -o $@ $(SERNUM) $<
 
 # Disassemble
 dis: $(HEX)
