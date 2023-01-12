@@ -39,6 +39,7 @@
 ;   b. Modified to allow for PASS THROUGH mode (in progress)
 ;   c. Modified to use an Irq Handler to deal with large block of data (DMA ish)
 ;      Fire & Forget from the applications point of view.
+;   d. Add RxIrq handling
 ;
 ; Exported interfaces are...
 ;    DmxIrqHandler - invoked via 'call' from the application IrqHandler
@@ -143,6 +144,7 @@ SENDBREAK
 
 	decf	DmxTxState,F	; proceed to State2 SENDMAB
 
+ifdef DEBUG_WORKAROUND
  	; Check for BLINK routine
 	decfsz  DMX_BLINK,F
 	return
@@ -154,7 +156,7 @@ SENDBREAK
 	movlw	LED_MASK_DMX
 	BANKSEL LED_PORT_DMX 	; BANK 2
 	xorwf	LED_PORT_DMX,F	; Toggle DMX LED
-
+endif
 	return
 
 ; DmxTxState = 2. Mark After Break (line IDLE for 100uSec) send a start code
@@ -203,6 +205,13 @@ SENDMBB
 DmxIrqHandler
 	btfss	YADA_STATUS, YADA_DIR_BIT ; Receiving DMX?
 	call	DmxRxIrqHandler
+
+ 	BANKSEL PIE1
+        btfss   PIE1,TXIE   ; Are we IRQ enabled Nope.. exit
+        return
+
+        BANKSEL PIR1
+        btfsc   PIR1,TXIF   ; Did the TXIF interrupt go off?
 	call	DmxTxIrqHandler
 	return
 
@@ -224,23 +233,33 @@ DmxRx_IDLE
 	return
 
 DmxRx_W4BREAK
+	BANKSEL PIR1	; BANK 0
 	btfsc	PIR1,RCIF	; If a byte is received
-	movf	RCREG,W		; Throw it away
+	call	flush_reg	; Throw it away
+	BANKSEL RCSTA
 	btfss	RCSTA, FERR	; Woot woot.. break found
 	return	; not found ..
 	movf	RCREG,W		; Read the Receive bufer to clear the error
 	incf	DmxRxState,F
 	return
+flush_reg
+	BANKSEL RCREG
+	movf	RCREG,W
+	return
 
 DmxRx_W4START
+	BANKSEL PIR1
 	btfss	PIR1, RCIF	; No Byte received = return
 	return			;
+	BANKSEL RCSTA
 	btfsc	RCSTA, FERR	; BREAK = Keep spinning  ?? Clear the error?
 	return			;
+
+
 	movf	RCREG, W
 	andlw	0xFF
 	bnz	DmxRx_Err
-        ;; Stat Byte encountered - read the payload
+        ;; Start Byte encountered - read the payload
 	movlw	LOW DmxUniverse	; init pointer to transmit buffer
 	movwf	FSR0_RXL
 	movlw	HIGH DmxUniverse
@@ -251,12 +270,15 @@ DmxRx_W4START
 DmxRx_Err
 	movlw	RX_STATE_W4BREAK
 	movwf	DmxRxState
+
 	return
 
 DmxRx_READ
+	BANKSEL RCSTA
 	btfsc	RCSTA,FERR
 	goto	DmxRx_Err
 
+        BANKSEL PIR1
 	btfss	PIR1,RCIF	; Byte recieved?
 	return			; No Byte = return and keep waiting
 
@@ -265,6 +287,7 @@ DmxRx_READ
 	movf	FSR0_RXH,W
 	movwf	FSR0H
 
+	BANKSEL RCREG
 	movf	RCREG,W 	; Copy Incoming byte into DmxUniverse
 	movwi	FSR0++
 
@@ -272,6 +295,7 @@ DmxRx_READ
 	movwf	FSR0_RXL
 	movf	FSR0H,W
 	movwf	FSR0_RXH
+
 	return
 
  ;****************************************************************************************

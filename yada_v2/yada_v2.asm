@@ -213,13 +213,10 @@ _app_config
 
 
 _app_interrupt
-        BANKSEL PIE1
-        btfss   PIE1,TXIE   ; Are we IRQ enabled
-        goto    _dmx_irq_done
-
-        BANKSEL PIR1
-        btfss   PIR1,TXIF   ; Did the TXIF interrupt go off?
-        goto    _dmx_irq_done
+     ; Moved test into the DmxIrqHandler
+        ;BANKSEL PIE1
+        ;btfss   PIE1,TXIE   ; Are we IRQ enabled
+        ;goto    _dmx_irq_done
 
 	PAGESEL	DmxIrqHandler
         call	DmxIrqHandler
@@ -849,11 +846,28 @@ _admin_set_serialno	;0x42 05
 	retlw	3
 
 _admin_set_direction
-	moviw	2[FSR1]
+	moviw	2[FSR1] ; Payload Byte: 0x00 = RX 0x01 = TX
 	andlw	0xFF
-	bcf	YADA_STATUS, YADA_DIR_BIT
 	btfss	STATUS,Z
-	bsf	YADA_STATUS, YADA_DIR_BIT
+	goto	_set_dir_out ; not zero
+_set_dir_in
+	movlw	1
+	movwf	DmxRxState
+	BANKSEL RCSTA
+	bsf	RCSTA,CREN
+	bcf	YADA_STATUS, YADA_DIR_BIT ; RX Mode - clear the BIT
+        BANKSEL PIE1
+	bsf	PIE1,RCIE
+	goto	_set_dir_exit
+_set_dir_out
+	bsf	YADA_STATUS, YADA_DIR_BIT ; TX Mode - put the bit ON
+	clrf	DmxRxState
+        BANKSEL PIE1
+	bcf	PIE1,RCIE
+	BANKSEL RCSTA
+	bcf	RCSTA,CREN
+
+_set_dir_exit
 	retlw   BSTAT_OK
 
 _dmx_in
