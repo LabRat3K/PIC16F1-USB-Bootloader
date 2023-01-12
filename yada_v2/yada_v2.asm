@@ -156,7 +156,7 @@ USED_RAM_LEN		equ	EP1OUT_BUF+EP1_OUT_BUF_SIZE-BDT_START
 ;; ----------------------------
 ;; RAM Block to Hold DMX Buffer
 ;; ----------------------------
-;; NOTE NOTE NOTE : Datasheet error - the 512 linear block starts at 0x21F0 NOT at 0x2200. 
+;; NOTE NOTE NOTE : Datasheet error - the 512 linear block starts at 0x21F0 NOT at 0x2200.g
 DmxUniverse		equ	(0x21F0)
 
 ; ----------------------
@@ -173,7 +173,7 @@ DmxUniverse		equ	(0x21F0)
   #define MODE_DMX  (0x00)
   #define MODE_PASS (0x01
 
-#define YADA_DIR_BIT 1
+#define YADA_DIR_BIT 1 			; Direction Bitg
 #define YADA_DIR_MASK (1<< YADA_DIR_BIT)
   #define YADA_DIR_TX   (0x02)
   #define YADA_DIR_RX   (0x00)
@@ -224,22 +224,6 @@ _app_interrupt
 	PAGESEL	DmxIrqHandler
         call	DmxIrqHandler
         PAGESEL _app_interrupt
-
-	; Check for incoming UART interrupt
-	;
-	; btfss  YADA_STATUS,YADA_MODE_RX
-	; goto	_dmx_irq_done
-	; If NO RX jump to _dmx_irq_done  - check for USB events
- 	;   - Call UART_RX_HANDLER
-	;     PAGESEL _app_interrupt ; restore back to IRQ handling
-	;
-	; The UART_RX_HANDLER
- 	;    State jump to action..
-	;      Did we see break? Move to Wait for Start
-          ;    Wait For Start - did we see Start? Move to RxData
- 	  ;    RxData - copy byte into array
-	  ;    Clear the Interrupt
-	  ;    Return
 
 _dmx_irq_done
 	if USB_INTERRUPTS
@@ -731,6 +715,10 @@ _admin_packet
 	decf	WREG,W			; Set SerialNo
 	bz	_admin_set_serialno
 
+	; 0x42 06 <direction> 0 = IN, 1 = OUT
+	decf	WREG,W			; Set SerialNo
+	bz	_admin_set_direction
+
 	movlw	BSTAT_INVALID_COMMAND
 	movwi	0[FSR0]	; copy status to IN buffer
 	retlw	1
@@ -859,6 +847,14 @@ _admin_set_serialno	;0x42 05
 	movlw	BSTAT_INVALID_COMMAND
 	movwi	2[FSR0] 	; copy status to IN buffer
 	retlw	3
+
+_admin_set_direction
+	moviw	2[FSR1]
+	andlw	0xFF
+	bcf	YADA_STATUS, YADA_DIR_BIT
+	btfss	STATUS,Z
+	bsf	YADA_STATUS, YADA_DIR_BIT
+	retlw   BSTAT_OK
 
 _dmx_in
 	moviw  	1[FSR1] ; Copy index from EP1_OUT
