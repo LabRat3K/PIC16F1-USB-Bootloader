@@ -144,7 +144,6 @@ SENDBREAK
 
 	decf	DmxTxState,F	; proceed to State2 SENDMAB
 
-ifdef DEBUG_WORKAROUND
  	; Check for BLINK routine
 	decfsz  DMX_BLINK,F
 	return
@@ -156,7 +155,7 @@ ifdef DEBUG_WORKAROUND
 	movlw	LED_MASK_DMX
 	BANKSEL LED_PORT_DMX 	; BANK 2
 	xorwf	LED_PORT_DMX,F	; Toggle DMX LED
-endif
+
 	return
 
 ; DmxTxState = 2. Mark After Break (line IDLE for 100uSec) send a start code
