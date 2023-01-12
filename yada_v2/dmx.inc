@@ -295,6 +295,13 @@ DmxRx_READ
 	movf	FSR0H,W
 	movwf	FSR0_RXH
 
+	andlw	0x23
+	btfss	STATUS,Z
+	return  ; NOT mathing end of payload
+        movf	FSR0L,W
+	andlw   0xEF
+	btfsc	STATUS,Z
+	goto	DmxRx_Err ; Winner - last byte of DmxUniverse
 	return
 
  ;****************************************************************************************
