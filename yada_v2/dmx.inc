@@ -144,6 +144,10 @@ SENDBREAK
 
 	decf	DmxTxState,F	; proceed to State2 SENDMAB
 
+	btfss	YADA_STATUS, YADA_DIR_BIT ; Receiving DMX?
+	return  ; Receiving mode - counter handled by RxIrq
+
+_dmx_led_handler
  	; Check for BLINK routine
 	decfsz  DMX_BLINK,F
 	return
@@ -264,6 +268,7 @@ DmxRx_W4START
 	movlw	HIGH DmxUniverse
 	movwf	FSR0_RXH
         incf	DmxRxState,F	; Change state to RX_STATE_READ
+
 	return
 
 DmxRx_Err
@@ -290,19 +295,21 @@ DmxRx_READ
 	movf	RCREG,W 	; Copy Incoming byte into DmxUniverse
 	movwi	FSR0++
 
-	movf	FSR0L,W
-	movwf	FSR0_RXL
 	movf	FSR0H,W
 	movwf	FSR0_RXH
+	movf	FSR0L,W
+	movwf	FSR0_RXL
 
-	andlw	0x23
+	xorlw	0xF0 	; Did we index past end of the Buffer?
 	btfss	STATUS,Z
-	return  ; NOT mathing end of payload
-        movf	FSR0L,W
-	andlw   0xEF
-	btfsc	STATUS,Z
-	goto	DmxRx_Err ; Winner - last byte of DmxUniverse
+	return  ; NOT matching end of payload
+        movf	FSR0_RXH,W
+	xorlw   0x23    ; Looking to match 0x23F0 (AKA one past end of buffer)
+	btfss	STATUS,Z
 	return
+	; Getting Here .. end of buffer so check update LED status
+	call	_dmx_led_handler
+	goto	DmxRx_Err
 
  ;****************************************************************************************
 DmxTxIrqHandler
