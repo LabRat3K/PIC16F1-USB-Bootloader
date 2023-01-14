@@ -381,6 +381,8 @@ SetupSerial
 DmxSetup
 	call	SetupSerial	; initialize serial comm
 	call	InitTX		; initialize the I/O ports and TMR0
+	clrf    YADA_STATUS
+	bsf  	YADA_STATUS, YADA_DIR_BIT ; Set to Transmit
  	return
 
 ;****************************************************************************************

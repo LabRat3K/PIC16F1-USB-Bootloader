@@ -934,7 +934,6 @@ _dmx_copy_loop
 	retlw	0x00	; *** ZERO LENGTH REPLY ***
 
 _dmx_led_cnt
-	goto	_dmx_copy_payload
 	decfsz	USB_BLINK,F
 	goto	_dmx_copy_payload
 	movlw	44
