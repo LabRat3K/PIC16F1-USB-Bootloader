@@ -627,6 +627,8 @@ void OutDataStage(void)
 // the transfer.
 void SetupStage(void)
 {
+// DEBUG DEBUG
+    uint8_t temp;
     // Note: Microchip says to turn off the UOWN bit on the IN direction as
     // soon as possible after detecting that a SETUP has been received.
     Interfaces[0].Input.Stat &= ~UOWN;
@@ -646,6 +648,7 @@ void SetupStage(void)
 
 // DEBUG DEBUG DEBUG
         LATCbits.LATC3 = 0; // BLUE ON
+    temp = SetupPacket.bmRequestType;
     // TBD: Add handlers for any other classes/interfaces in the device
 
 /*    if (!RequestHandled)
@@ -660,15 +663,16 @@ void SetupStage(void)
         Interfaces[0].Input.Stat  |= UOWN;
     }
     else*/ 
-    if (SetupPacket.bmRequestType & 0x80) 
+    //if (SetupPacket.bmRequestType & 0x80) 
+/* *** BUG WORKAROUND.. suspect that PCLATH isn't being updated 
+   When crossing the 0x7FF to 0x800 boundary                    */
+ __asm
+    PAGESEL $
+ __endasm;
+    if (temp & 0x80) 
     {
 // DEBUG DEBUG DEBUG
         LATCbits.LATC2 = 0; // AMBER ON
-
-  __asm
-     bcf LATC,2
-  __endasm;
-
 
         // Device-to-host
         if(SetupPacket.wLength < wCount)
@@ -690,9 +694,6 @@ void SetupStage(void)
     {
 // DEBUG DEBUG DEBUG
         LATAbits.LATA4 = 0; // GREEN LED ON
-  __asm
-     bcf LATA,4
-  __endasm;
         // Host-to-device
         CtrlTransferStage = DATA_OUT_STAGE;
 
