@@ -343,7 +343,7 @@ _usb_ctrl_setup
 ; the CDC and standard requests we'll receive have distinct bRequest numbers
 ; Windows 10 patch
 	bcf	BANKED_EP0OUT_STAT,UOWN	; dearm the OUT endpoint
-	bcf	BANKED_EP0IN_STAT,UOWN	; dearm the OUT endpoint
+	bcf	BANKED_EP0IN_STAT,UOWN	; dearm the IN  endpoint
 
 	movf	BANKED_EP0OUT_BUF+bmRequestType,W
 	btfss	BANKED_EP0OUT_BUF+bmRequestType,7	; is this host->device?
