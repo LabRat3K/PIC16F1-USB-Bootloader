@@ -2,6 +2,7 @@
 *.lst
 *.cod
 *.hex
+*.asm
 MPLABXLog.*
 *.o
 import_list.inc
