@@ -181,7 +181,7 @@ volatile uint8_t ControlTransferBuffer[E0SZ];
 // !!! It is ABSOLUTELY VITAL for the start of BDTs to point to 0x2000.
 // !!! Won't work without it.
 // *** LABRAT: SDCC needed to declare the BANKED start address (as we are only using EP0 & 1 .. fits in a single bank so no need to worry)
-volatile __data __at (0x020) Interface Interfaces[InterfaceCount + 1];
+volatile Interface Interfaces[InterfaceCount + 1] @ 0x2000;
 //volatile __data __at (0x2000) Interface Interfaces[InterfaceCount + 1];
 // ... The hours I've waisted before I found out... :(
 
@@ -489,13 +489,13 @@ static void SetFeature(void)
 void ProcessStandardRequest(void)
 {
     uint8_t request = SetupPacket.bRequest;
-/*
+
     if((SetupPacket.bmRequestType & 0x60) != 0x00) {
         // Not a standard request - don't process here.  Class or Vendor
         // requests have to be handled seperately.
         return;
     }
-*/
+
 
     if (request == SET_ADDRESS)
     {
@@ -627,8 +627,6 @@ void OutDataStage(void)
 // the transfer.
 void SetupStage(void)
 {
-// DEBUG DEBUG
-    uint8_t temp;
     // Note: Microchip says to turn off the UOWN bit on the IN direction as
     // soon as possible after detecting that a SETUP has been received.
     Interfaces[0].Input.Stat &= ~UOWN;
@@ -646,12 +644,9 @@ void SetupStage(void)
     // See if the HID class can do something with it.
     ProcessHIDRequest();
 
-// DEBUG DEBUG DEBUG
-        LATCbits.LATC3 = 0; // BLUE ON
-    temp = SetupPacket.bmRequestType;
     // TBD: Add handlers for any other classes/interfaces in the device
 
-/*    if (!RequestHandled)
+    if (!RequestHandled)
     {
         // If this service wasn't handled then stall endpoint 0
         Interfaces[0].Output.Cnt = E0SZ;
@@ -662,18 +657,9 @@ void SetupStage(void)
         Interfaces[0].Output.Stat |= UOWN;
         Interfaces[0].Input.Stat  |= UOWN;
     }
-    else*/ 
-    //if (SetupPacket.bmRequestType & 0x80) 
-/* *** BUG WORKAROUND.. suspect that PCLATH isn't being updated 
-   When crossing the 0x7FF to 0x800 boundary                    */
- __asm
-    PAGESEL $
- __endasm;
-    if (temp & 0x80) 
+    else
+    if (SetupPacket.bmRequestType & 0x80) 
     {
-// DEBUG DEBUG DEBUG
-        LATCbits.LATC2 = 0; // AMBER ON
-
         // Device-to-host
         if(SetupPacket.wLength < wCount)
             wCount = SetupPacket.wLength;
@@ -692,8 +678,6 @@ void SetupStage(void)
     }
     else
     {
-// DEBUG DEBUG DEBUG
-        LATAbits.LATA4 = 0; // GREEN LED ON
         // Host-to-device
         CtrlTransferStage = DATA_OUT_STAGE;
 
