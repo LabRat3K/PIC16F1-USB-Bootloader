@@ -63,7 +63,7 @@ typedef struct _BufferInfo
 // Global Variables
 extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, chap 9.1.1)
 
-// USB Functions
+// Exported USB Functions
 void InitializeUSB(void);
 void EnableUSBModule(void);
 void HIDSend(uint8_t InterfaceNo);

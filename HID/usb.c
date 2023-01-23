@@ -181,8 +181,8 @@ volatile uint8_t ControlTransferBuffer[E0SZ];
 // !!! It is ABSOLUTELY VITAL for the start of BDTs to point to 0x2000.
 // !!! Won't work without it.
 // *** LABRAT: SDCC needed to declare the BANKED start address (as we are only using EP0 & 1 .. fits in a single bank so no need to worry)
-volatile Interface Interfaces[InterfaceCount + 1] @ 0x2000;
-//volatile __data __at (0x2000) Interface Interfaces[InterfaceCount + 1];
+//volatile Interface Interfaces[InterfaceCount + 1] @ 0x2000;
+volatile __data __at (0x020) Interface Interfaces[InterfaceCount + 1];
 // ... The hours I've waisted before I found out... :(
 
 
