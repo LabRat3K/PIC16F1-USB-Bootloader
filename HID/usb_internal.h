@@ -1,29 +1,42 @@
 /*
- * File:   usb_shared.h
+ * File:   usb_internal.h
  * Author: Andrew Williams 
  *
  * Names and externs only. NO VARIABLE DECLARATIONS
  */
 
-#ifndef USBSHARED_H
-#define	USBSHARED_H
+#ifndef USBINTERNAL_H
+#define	USBINTERNAL_H
 
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
+#include "usb.h"
 
 // Vendor and Product Information
 #define VendorId    0x04D8
 #define ProductId   0x01A6
 #define ReleaseNo   0x0001
 
+// MACROS 
+
+#define PTR16(x) ((unsigned int)(((unsigned long)x) & 0xFFFF))
+#define LSB(x) (x & 0xFF)
+#define MSB(x) ((x & 0xFF00) >> 8)
+#define ClearUsbInterruptFlag(x)        UIR &= ~(x)
+#define VIDL LSB(VendorId)  // Vendor Id Low Byte (LSB)
+#define VIDH MSB(VendorId)  // Vendor Id High Byte (MSB)
+#define PIDH MSB(ProductId) // Product Id High Byte (MSB)
+#define PIDL LSB(ProductId) // Product Id Low Byte (LSB)
+#define RELH MSB(ReleaseNo) // Release Number High Byte (MSB)
+#define RELL LSB(ReleaseNo) // Release Number Low Byte (LSB)
+#define INTF InterfaceCount // Total Count of Interfaces
+#define IHID HID_INTERFACE_NUMBER
+#define E0SZ Endpoint0BufferSize
+#define CONFIG_HEADER_SIZE      0x09 // Configuration descriptor header size (see UsbDescriptors.h) - Pretty much always 9 :)
+
 // Definitions
 #define InterfaceCount          0x01 // One Interface - Just Keyboard
 #define StringDescriptorCount   0x03 // Three string descriptors - See Bottom of this file
 #define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
 #define HidDescriptorSize       0x20 // Size Of HID Descriptor
-// HID
-#define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define HidInterfaceNumber      0x00 // Interface For our HID
 
 // Strings
 #define SMAN 0x01   // Manufacturer Name String Index
@@ -33,29 +46,34 @@ typedef unsigned short uint16_t;
 
 #define CONFIG_HEADER_SIZE      0x09
 
-// Actual USB Data Buffers
-extern volatile uint8_t HIDRxBuffer[HidReportByteCount];
-extern volatile uint8_t HIDTxBuffer[HidReportByteCount];
-
+// Structures
+typedef struct _BufferInfo
+{
+    uint8_t Size;
+    uint8_t *Buffer;
+} BufferInfo;
 
 /***********************/
 /* Descriptors         */
 /***********************/
 
+// -------------------
 // Device Descriptor
 extern const uint8_t DeviceDescriptor[];
 
 // ...Stuck these here to keep the number of files to minimum
-#define HRBC HidReportByteCount
+#define HRBC HID_REPORT_BYTE_COUNT
 typedef struct _configStruct
 {
     uint8_t configHeader[CONFIG_HEADER_SIZE];
     uint8_t HIDDescriptor[HidDescriptorSize];
 } ConfigStruct;
 
+// -------------------------
 // Configuration descriptor
 extern const ConfigStruct ConfigurationDescriptor ;
 
+// --------------------
 // Report For Keyboard
 extern const uint8_t HIDReport[];
 

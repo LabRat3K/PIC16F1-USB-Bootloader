@@ -3,6 +3,7 @@
  * Author: Szymon Roslowski
  *
  * Created on 13 October 2014, 17:46
+ * Tweaked Jan 23, 2023 by Andrew Williams (SDCC compatible)
  *
  * Firmware framework for USB I/O on PIC 16F1455 (and siblings)
  *
@@ -28,7 +29,7 @@
  * or see <http://www.gnu.org/licenses/>
  */
 
-//#include <htc.h>
+
 #include "usb.h"
 #include "usb_descriptors.h"
 #include "pic16f1455.h"
@@ -189,7 +190,7 @@ volatile __data __at (0x020) Interface Interfaces[InterfaceCount + 1];
 /***********************/
 /* Implementation      */
 /***********************/
-uint8_t IsUsbDataAvaialble(uint8_t InterfaceNo)
+uint8_t IsUsbDataAvailable(uint8_t InterfaceNo)
 {
     if(InterfaceNo >= InterfaceCount) return 0;
     if(!(Interfaces[InterfaceNo + 1].Output.Stat & UOWN))
@@ -564,6 +565,7 @@ void ProcessStandardRequest(void)
             // No support for alternate interfaces - just ignore.
             RequestHandled = 1;
     }
+/* LabRat commented out these empty options
     else if (request == SET_DESCRIPTOR)
     {
     }
@@ -573,6 +575,7 @@ void ProcessStandardRequest(void)
     else
     {
     }
+*/
 }
 
 // Data stage for a Control Transfer that sends data to the host

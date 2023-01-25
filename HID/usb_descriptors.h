@@ -12,6 +12,7 @@
 #ifndef USBDESCRIPTORS_H
 #define	USBDESCRIPTORS_H
 
+#include "usb_internal.h"
 
 // Vendor and Product Information
 #define VendorId    0x04D8
@@ -23,9 +24,7 @@
 #define StringDescriptorCount   0x03 // Three string descriptors - See Bottom of this file
 #define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
 #define HidDescriptorSize       0x20 // Size Of HID Descriptor
-// HID
-#define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define HidInterfaceNumber      0x00 // Interface For our HID
+
 
 // Strings
 #define SMAN 0x01   // Manufacturer Name String Index
@@ -34,13 +33,13 @@
 #define SCON 0x00   // Configuration String Index
 
 // Actual USB Data Buffers
-volatile uint8_t HIDRxBuffer[HidReportByteCount];
-volatile uint8_t HIDTxBuffer[HidReportByteCount];
+volatile uint8_t HIDRxBuffer[HID_REPORT_BYTE_COUNT];
+volatile uint8_t HIDTxBuffer[HID_REPORT_BYTE_COUNT];
 
 BufferInfo Buffers[(InterfaceCount * 2)] =
 {
-    { HidReportByteCount, (uint8_t*)&HIDTxBuffer },
-    { HidReportByteCount, (uint8_t*)&HIDRxBuffer }
+    { HID_REPORT_BYTE_COUNT, (uint8_t*)&HIDTxBuffer },
+    { HID_REPORT_BYTE_COUNT, (uint8_t*)&HIDRxBuffer }
 };
 
 /***********************/
@@ -72,7 +71,7 @@ const uint8_t DeviceDescriptor[]=
 
 // ...Stuck these here to keep the number of files to minimum
 /*
-#define HRBC HidReportByteCount
+#define HRBC HID_REPORT_BYTE_COUNT
 typedef struct _configStruct
 {
     uint8_t configHeader[CONFIG_HEADER_SIZE];
@@ -105,7 +104,6 @@ const ConfigStruct ConfigurationDescriptor =
     0x01,   // Subclass code (Sublass Boot(1) as opposed to NONE(0) the rest reserved)
     0x01,   // Protocol code 0-none, 1-Keyboard, 2- Mouse
     0x00,   // Interface String Descriptor Index
-
 
         // Keyboard Class-Specific descriptor
     0x09,   // Size of this descriptor in bytes
