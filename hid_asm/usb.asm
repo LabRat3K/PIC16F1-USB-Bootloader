@@ -27,7 +27,7 @@
 #define GET_STATUS                  0x00
 #define CLEAR_FEATURE               0x01
 #define SET_FEATURE                 0x03
-#define SET_STATE_ADDRESS           0x05
+#define SET_ADDRESS                 0x05
 #define GET_DESCRIPTOR              0x06
 #define SET_DESCRIPTOR              0x07
 #define GET_CONFIGURATION           0x08
@@ -67,9 +67,6 @@
 #define STATE_DEFAULT               0x03
 #define STATE_ADDRESS               0x04
 #define STATE_CONFIGURED            0x05
-
-; Interrupts
-#define USB_URST                    0x01
 
 ; Control Transfer Stages - see USB spec chapter 5
 #define STAGE_SETUP                 0x00 ; Start of a control transfer (followed by 0 or more data stages)
@@ -136,13 +133,13 @@ ENDC
 #define SETUP_wValue1       (SetupPacket+3) ; MSB of wValue
 #define SETUP_wIndex0       (SetupPacket+4) ; LSB of wIndex
 #define SETUP_wIndex1       (SetupPacket+5) ; MSB of wIndex
-#define SETUP_wLengthH      (SetupPacket+6)
-#define SETUP_wLengthL      (SetupPacket+7) ; Number of bytes to transfer if there's a data stage
+#define SETUP_wLengthL      (SetupPacket+6)
+#define SETUP_wLengthH      (SetupPacket+7) ; Number of bytes to transfer if there's a data stage
 #define SETUP_extra	    (SetupPacket+8) ; Fill out to same size as Endpoint 0 max buffer (E0SZ-7)
 
 ;const uint8_t *ROMoutPtr;   Data to send to the host
 
-	org 0x300
+	org	0x400
 ;***********************/
 ;* Implementation      */
 ;***********************/
@@ -368,7 +365,7 @@ GD_check_CONFIG:
 	goto	GD_exit
 GD_check_STRING:
 	movf	SETUP_wValue1,W
-	xorlw	CONFIGURATION_DESCRIPTOR
+	xorlw	STRING_DESCRIPTOR
 	btfss	STATUS,Z
 	goto	GD_exit
 	bsf	StatusBits, status_request_handled
@@ -387,7 +384,7 @@ GD_check_STRING:
 	goto	GD_Str2 ; Request for STR002
 	decf	WREG,W
 	btfsc	STATUS,Z
-	goto	GD_Str3 ; Request for STR002
+	goto	GD_Str3 ; Request for STR003
 	goto	GD_Str0 ; Error condition jump to 0x0
 GD_Str3
 	movlw	low StringDescriptor3
@@ -618,15 +615,15 @@ ProcessStandardRequest:
 	return
 ;    }
 
-;    if (request == SET_STATE_ADDRESS)
+;    if (request == SET_ADDRESS)
 ;    {
 ;            // Set the address of the device.  All future requests
 ;            // will come to that address.  Can't actually set UADDR
-;            // to the new address yet because the rest of the SET_STATE_ADDRESS
+;            // to the new address yet because the rest of the SET_ADDRESS
 ;            // transaction uses address 0.
 ;            StatusBits |= (1<< status_request_handled);
 	movf	SETUP_bRequest,W
-	xorlw	SET_STATE_ADDRESS
+	xorlw	SET_ADDRESS
 	btfss	STATUS,Z
 	goto	PSR_GET_DESCR
 	bsf	StatusBits, status_request_handled
@@ -635,6 +632,7 @@ ProcessStandardRequest:
 	movwf	DeviceState
 ;            DeviceAddress = SetupPacket.wValue0;
 	movf	SETUP_wValue0,W
+	BANKSEL DeviceAddress
 	movwf	DeviceAddress
 	goto	PSR_exit
 ;    }
@@ -692,19 +690,30 @@ PSR_config_not_0
 	goto	PSR_exit
 
 PSR_GET_CONFIG
+;    else if (request == GET_CONFIGURATION)
 	movf	SETUP_bRequest,W
 	xorlw	GET_CONFIGURATION
 	btfss	STATUS,Z
 	goto	PSR_GET_STATUS
-
-
-;    else if (request == GET_CONFIGURATION)
 ;    {
+
 ;            StatusBits |= (1<< status_request_handled);
+	bsf	StatusBits,status_request_handled
 ;            outPtr = (uint8_t*)&CurrentConfiguration;
+	movf	outPtrL,W
+	movwf	FSR0L
+	movf	outPtrH,W
+	movwf	FSR0H
+	BANKSEL CurrentConfiguration
+	movf	CurrentConfiguration,W
+	movwi	0[FSR0]
 ;            wCount = 1;
+	movlw	1
+	movwf	wCount
 ;            StatusBits |= type_RAM;
 ;    }
+	goto	PSR_exit
+	
 PSR_GET_STATUS
 ;    else if (request == GET_STATUS)
 	movf	SETUP_bRequest,W
@@ -813,9 +822,9 @@ IDS_clear_BD
 ;    // Update the number of bytes that still need to be sent.  Getting
 ;    // all the data back to the host can take multiple transactions, so
 ;    // we need to track how far along we are.
-;    wCount = wCount - bufferSize;
+;    wCount = wCount - bufferSize;,W
 	; W still holds 'bufferSize'
-	subwf  wCount,W
+	subwf  wCount,f
 ;    Interfaces[0].Input.Addr = PTR16(&ControlTransferBuffer);
 	movlw	low ControlTransferBuffer
 	movwf	BANKED_EP0IN_ADRL
@@ -835,13 +844,21 @@ IDS_clear_BD
 ;             for(i=0;i<bufferSize;i++) *inPtr++ = *ROMoutPtr++;
 ;	else 
 ;             for(i=0;i<bufferSize;i++) *inPtr++ = *outPtr++;
+	movf	bufferSize,W
+	btfsc	STATUS,Z
+	goto	IDS_exit
 IDS_copy_loop
 	moviw	FSR1++ ; copy from outPtr
 	movwi	FSR0++ ; copy to inPtr
 	decfsz	bufferSize,F
 	goto	IDS_copy_loop
-	movf	bufferSize,W
+
 IDS_exit
+	; Store outPtr context
+	movf	FSR1L,W
+	movwf	outPtrL
+	movf	FSR1H,W
+	movwf	outPtrH
 	return	
 
 ;; Data stage for a Control Transfer that reads data from the host
@@ -867,6 +884,26 @@ ods_loop
 	movwi	FSR0++
 	decfsz	WREG,W
 	goto	ods_loop
+	; Save Context
+	movf	FSR1L,W
+	movwf	outPtrL
+	movf	FSR1H,W
+	movwf	outPtrH
+
+	movf	FSR0L,W
+	movwf	inPtrL
+	movf	FSR1H,W
+	movwf	inPtrH
+	; Save Context
+	movf	FSR1L,W
+	movwf	outPtrL
+	movf	FSR1H,W
+	movwf	outPtrH
+
+	movf	FSR0L,W
+	movwf	inPtrL
+	movf	FSR1H,W
+	movwf	inPtrH
 	return
 
 ; Process the Setup stage of a control transfer.  This code initializes the
@@ -880,6 +917,7 @@ SetupStage:
 	bcf	BANKED_EP0OUT_STAT,UOWN
     ; Initialize the transfer process
 	movlw	STAGE_SETUP
+	BANKSEL	CtrlTransferStage
 	movwf	CtrlTransferStage
  	bcf  	StatusBits, status_request_handled ; Clear handled bit 
 	clrf	wCount         ; No bytes transferred
@@ -902,7 +940,7 @@ SetupStage:
 	movwf	BANKED_EP0OUT_CNT
 	movlw	low SetupPacket
 	movf	BANKED_EP0OUT_ADRL,W
-	movwf	high SetupPacket
+	movlw	high SetupPacket
 	movwf	BANKED_EP0OUT_ADRH
 	movlw	(_BSTALL)
 	movwf	BANKED_EP0OUT_STAT
@@ -913,9 +951,9 @@ SetupStage:
 
 ss_device_to_host:
 	BANKSEL SetupPacket
-	movwf	SETUP_bmRequestType
+	movf	SETUP_bmRequestType,W
 	xorlw	0x80
-	btfsc   STATUS,Z
+	btfss   STATUS,Z
 	goto	host_to_device
 
         ; Device-to-host   *** LABRAT: come back and re-check this
@@ -924,7 +962,7 @@ ss_device_to_host:
 	movf	SETUP_wLengthL,W
 	BANKSEL	wCount
 	subwf	wCount,w   ; wCount > wLength C=0
-	btfsc   STATUS,C
+	btfss   STATUS,C
         goto    ss_in_data 
 	BANKSEL SETUP_wLengthL
 	movwf	SETUP_wLengthL
@@ -936,6 +974,7 @@ ss_in_data:
 	pagesel $
 
 	movlw	STAGE_DATA_IN
+	BANKSEL	CtrlTransferStage
 	movwf	CtrlTransferStage
 
 	BANKSEL BANKED_EP0OUT_STAT
@@ -958,6 +997,7 @@ ss_in_data:
 host_to_device:
 
 	movlw	STAGE_DATA_OUT
+	BANKSEL	CtrlTransferStage
 	movwf	CtrlTransferStage
 
         ; Clear the input buffer descriptor
@@ -983,11 +1023,13 @@ host_to_device:
 SetupStage_exit:
 	BANKSEL	UCON
     	bcf	UCON,PKTDIS 
+	return
 	
 ; Configures the buffer descriptor for endpoint 0 so that it is waiting for
 ; the status stage of a control transfer.
 WaitForSetupStage:
 	movlw	STAGE_SETUP
+	BANKSEL	CtrlTransferStage
 	movwf	CtrlTransferStage
 	BANKSEL BANKED_EP0OUT_STAT
 	movlw	E0SZ
@@ -996,10 +1038,11 @@ WaitForSetupStage:
 	movwf	BANKED_EP0OUT_ADRL
 	movlw	high SetupPacket
 	movwf	BANKED_EP0OUT_ADRH
-	movlw	(1<<DTSEN)
+	movlw	(_DTSEN)
 	movwf	BANKED_EP0OUT_STAT
 	bsf	BANKED_EP0OUT_STAT,UOWN
 	clrf	BANKED_EP0IN_STAT
+	return
 
 ; This is the starting point for processing a Control Transfer.  The code directly
 ; follows the sequence of transactions described in the USB spec chapter 5.  The
@@ -1024,6 +1067,7 @@ ProcessControlTransfer:
 
 PCT_1:
 	; else  are we in STAGE_DATA_OUT
+	BANKSEL	CtrlTransferStage
 	movf	CtrlTransferStage,W
 	xorlw	STAGE_DATA_OUT
 	btfss 	STATUS,Z
@@ -1070,6 +1114,7 @@ PCT_EP0IN:
 
 PCT_data_in:
 	; if (CtrlTransferStage == STAGE_DATA_IN)
+	BANKSEL	CtrlTransferStage
 	movf	CtrlTransferStage,W
 	xorlw	STAGE_DATA_IN
 	btfss	STATUS,Z
@@ -1092,30 +1137,34 @@ PCT_w4s:
 	pagesel $
 
 PCT_exit:
+	return
 
 InitializeUSB:
-        BANKSEL StatusBits
-	clrf	StatusBits	
 	BANKSEL UCFG
 	movlw 0x14
 	movwf UCFG  ; Enable Pullup resistors; full speed mode; No PingPong
+
 	movlw STATE_DETACHED
 	movwf DeviceState
 	bcf   StatusBits,status_remote_wakeup
+	BANKSEL CurrentConfiguration
 	clrf  CurrentConfiguration
+
+	BANKSEL UADDR
 	clrf  UADDR ; Reset USB Address
 	clrf  UEIR  ; Clear all USB Error Interrupt Flags
       ; Reset PP buffers
 	bsf   UCON, PPBRST
 	bcf   UCON, PPBRST
 
-        bcf   UCON,PKTDIS  ; Enable Packet Transfers
+	bcf   UCON,PKTDIS  ; Enable Packet Transfers
+	return
 
 EnableUSBModule:
     ; TBD: Check for voltage coming from the USB cable and use that
     ; as an indication we are attached.
 	BANKSEL UCON
-	btfss	UCON,USBEN
+	btfsc	UCON,USBEN
 	goto	eum_next
 	clrf	UCON
 	clrf	UIE
@@ -1132,6 +1181,7 @@ eum_next:
 	bsf	UIE,IDLEIE
 	movlw	STATE_POWERED
 	movwf	DeviceState
+	return
 
 ; Unsuspend the device
 UnSuspend:
@@ -1140,12 +1190,14 @@ UnSuspend:
       bcf UIE, ACTVIE
       movlw 0xFB
       andwf UIR,F
+      return 
 
 ; Full speed devices get a Start Of Frame (SOF) packet every 1 millisecond.
 ; Nothing is currently done with this interrupt (it is simply masked out).
 StartOfFrame:
       BANKSEL UIR
       bcf UIR, SOFIF
+      return
 
 ; This routine is called in response to the code stalling an endpoint.
 Stall:
@@ -1154,10 +1206,12 @@ Stall:
 	goto  	stall_exit
 	pagesel WaitForSetupStage
         call	WaitForSetupStage
+	pagesel $
 	BANKSEL UEP0
 	bcf	UEP0, EPSTALL
 stall_exit:
         bcf	UIR, STALLIF
+	return
 
 ; Suspend all processing until we detect activity on the USB bus
 Suspend:
@@ -1166,6 +1220,7 @@ Suspend:
 	movlw	0xEF
 	andwf	UIR,f
 	bsf	UCON, SUSPND
+        return
 
 BusReset:
 	BANKSEL UEIR
@@ -1186,12 +1241,18 @@ BusReset:
 
         bcf     UCON, PKTDIS ; Enable packet processing
 
+	pagesel	WaitForSetupStage
+	call	WaitForSetupStage
+	pagesel	$
+
 	bcf	StatusBits,status_remote_wakeup ; Remote wakeup is off by default
 	bcf	StatusBits,status_self_powered  ; Self powered is off by default
+	BANKSEL	CurrentConfiguration
 	clrf 	CurrentConfiguration ; Clear active configuration
 
 	movlw	STATE_DEFAULT
 	movwf	DeviceState
+	return
 
 ; Main entry point for USB tasks.  Checks interrupts, then checks for transactions.
 ProcessUSBTransactions:
@@ -1330,4 +1391,4 @@ PUT_exit:
 	bcf	PIR2,USBIF ; Clear Global USB Interrupt Flag
 	return
 
-	end
+;------------------------- End of USB.INC -----------------------
