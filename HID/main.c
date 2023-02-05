@@ -292,10 +292,10 @@ static void ProcessIncommingData(void)
 // -----------------------------------------------------
 static void CheckUsb(void)
 {
-    if(IsUsbDataAvailable(HID_INTERFACE_NUMBER) > 0 )
+    if(IsUsbDataAvailable() > 0 )
     {
         ProcessIncommingData();
-        ReArmInterface(HID_INTERFACE_NUMBER);
+        ReArmInterface();
     }
 }
 
@@ -393,7 +393,7 @@ static void ProcessIO(void)
 
     // If Data Pending then send some of it to HOST
     PrepareTxBuffer();
-    HIDSend(HID_INTERFACE_NUMBER);
+    HIDSend();
 
 }
 

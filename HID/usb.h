@@ -39,8 +39,8 @@ typedef unsigned short uint16_t;
 
 
 // Definitions
-#define HID_REPORT_BYTE_COUNT      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define HID_INTERFACE_NUMBER      0x00 // Interface For our HID
+#define HID_REPORT_BYTE_COUNT  0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
+#define HID_INTERFACE_NUMBER   0x00 // Interface For our HID
 
 // Global Variables
 extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, chap 9.1.1): used in IsUsbReady() macro below.
@@ -54,10 +54,10 @@ extern volatile uint8_t HIDRxBuffer[HID_REPORT_BYTE_COUNT];
 // Exported USB Functions
 void InitializeUSB(void);
 void EnableUSBModule(void);
-void HIDSend(uint8_t InterfaceNo);
+void HIDSend(void);
 void ProcessUSBTransactions(void);
-void ReArmInterface(uint8_t InterfaceNo);
-uint8_t IsUsbDataAvailable(uint8_t InterfaceNo);
+void ReArmInterface(void);
+uint8_t IsUsbDataAvailable(void);
 
 #endif	/* USB_H */
 

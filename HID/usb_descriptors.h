@@ -119,7 +119,7 @@ const ConfigStruct ConfigurationDescriptor =
     	// Keyboard Endpoint 1 In
     0x07,   // Size of this descriptor in bytes
     0x05,   // ENDPOINT descriptor type
-    0x81,   // Endpoint Address
+    0x81,   // Endpoint Address EP1IN
     0x03,   // Attributes (Interrupt)
     HRBC,   // Max Packet Size LSB
     0x00,   // Max Packet Size MSB
@@ -128,7 +128,7 @@ const ConfigStruct ConfigurationDescriptor =
     	// Keyboard Endpoint 1 Out
     0x07,   // Size of this descriptor in bytes
     0x05,   // ENDPOINT descriptor type
-    0x01,   // Endpoint Address
+    0x01,   // Endpoint Address EP1OUT
     0x03,   // Attributes (Interrupt)
     HRBC,   // Max Packet Size LSB
     0x00,   // Max Packet Size MSB
