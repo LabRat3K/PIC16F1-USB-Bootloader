@@ -1,10 +1,10 @@
 ; asmsyntax=pic
 ; File:   Usb.asm
-; Hand coded by Andrew Williams, based on C source by 
+; Hand coded by Andrew Williams, based on C source by
 ; Author: Szymon Roslowski
 ;
 ; Created on 13 October 2014, 17:46
-; Tweaked Jan 23, 2023 by Andrew Williams 
+; Tweaked Jan 23, 2023 by Andrew Williams
 ;
 ; Firmware framework for USB I/O on PIC 16F1455 (and siblings)
 ;
@@ -90,13 +90,14 @@
 #define type_RAM (0x00)
 #define type_ROM (1<<status_transfer_type)
 
-
  include "usb_descriptors.inc"
+
+
 ;***********************/
 ;* Local Variables     */
 ;***********************/
  CBLOCK 0x70            ; Global Variables
-	StatusBits	; 0x70   
+	StatusBits	; 0x70
 	outPtrL		; 0x71 SRC & Destination pointers for in/out going buffers
 	outPtrH         ; 0x72
 	inPtrL          ; 0x73
@@ -142,7 +143,6 @@
 #define SETUP_wLengthH      (SetupPacket+7) ; Number of bytes to transfer if there's a data stage
 #define SETUP_extra	    	(SetupPacket+8) ; Fill out to same size as Endpoint 0 max buffer (E0SZ-7)
 
-;const uint8_t *ROMoutPtr;   Data to send to the host
 
 	org	0x400
 ;***********************/
@@ -153,7 +153,7 @@ IsUsbDataAvailable:
 	; checking if EP1 has something for us.
 	; return 0 or the EP1Count
 	BANKSEL BANKED_EP1OUT_STAT
-	btfsc	BANKED_EP1OUT_STAT,UOWN 
+	btfsc	BANKED_EP1OUT_STAT,UOWN
 	retlw	0x00
     movf	BANKED_EP1OUT_CNT,W
 	return
@@ -236,7 +236,7 @@ ProcessHIDRequest:
 	btfss	STATUS,Z
 	return
 
-	; The bmRequestType must 1 
+	; The bmRequestType must 1
 	movf	SETUP_bmRequestType,W ; if (SetupPacket.bmRequestType & 0x1F) != 0x01
 	andlw	0x1F
 	decfsz	WREG,W
@@ -316,7 +316,7 @@ _PHR_check_GET_IDLE:
 	xorlw	GET_IDLE
 	btfss	STATUS,Z
 	goto	_PHR_check_SET_IDLE
-	
+
 	;	Update outPtr and wCount for the payload
 	bsf		StatusBits,status_request_handled
 	movlw	low HidIdleRate
@@ -427,7 +427,7 @@ _GD_check_STRING:
 
 	bsf		StatusBits, status_request_handled
 
-	; Update outPtrH .. and then determine outPtrL based on which 
+	; Update outPtrH .. and then determine outPtrL based on which
 	; string the host is asking for
 	movlw	high StringDescriptor0
 	movwf	outPtrH
@@ -442,7 +442,7 @@ _GD_check_STRING:
 	goto	_GD_Str1 ; Request for STR001
 	decf	WREG,W
 	; or String2
-	btfsc	STATUS,Z 
+	btfsc	STATUS,Z
 	goto	_GD_Str2 ; Request for STR002
 	decf	WREG,W
 	; or String3
@@ -524,7 +524,7 @@ gs_check2:
 	; then this was to an endpoint..
 	; Update status to show request was handled
 	bsf		StatusBits, status_request_handled
-	; Update inPtr to point to appropriate buffer  
+	; Update inPtr to point to appropriate buffer
 	;  inPtr = (uint8_t *)&Interfaces[0].Output + (endpointNum * 8);
 	BANKSEL SetupPacket
 	movf	SETUP_wIndex0,W
@@ -556,7 +556,7 @@ _gs_have_offset ; W contains endpointNum * 8
 	movlw	0x04
 	addwf	inPtrL,f
 
-	
+
 	; if(*inPtr & BSTALL)
 	;  ControlTransferBuffer[0] = 0x01;
 	movf	inPtrL,W
@@ -574,7 +574,7 @@ _gs_have_offset ; W contains endpointNum * 8
 	goto	_gs_common
 
 _gs_common:
-	; If the the request was handled ... 
+	; If the the request was handled ...
 	btfss	StatusBits, status_request_handled
 	goto	_gs_exit
 	; Then update outPtr to point at ControlTransferBuffer
@@ -582,7 +582,7 @@ _gs_common:
 	movwf	outPtrL
 	movlw	high ControlTransferBuffer
 	movwf	outPtrH
-	; And set the length to 2 
+	; And set the length to 2
 	movlw	0x02
 	movwf	wCount
 	; Set type to RAM
@@ -624,7 +624,7 @@ _SF_check_02
 	btfss	STATUS,Z
 	goto	_SF_exit
 
-	; then if it was an enpoint halt for EP *NOT* 0 
+	; then if it was an enpoint halt for EP *NOT* 0
 	; Note feature is located in wValue0
 	movf	SETUP_wValue0,W
 	xorlw	ENDPOINT_HALT
@@ -652,7 +652,7 @@ _SF_ep_loop
 	decfsz 	bufferSize,F
 	goto	_SF_ep_loop
 _SF_have_offset
-	;W now contains offset to add  
+	;W now contains offset to add
 	addlw	BANKED_EP0OUT
 	movwf	inPtrL
 	movlw	high BANKED_EP0OUT
@@ -677,14 +677,14 @@ _SF_have_offset
 	xorlw	SET_FEATURE
 	btfss	STATUS,Z
 	goto	_SF_check_dir
-	; then write 0x84 
+	; then write 0x84
 	movlw	0x84
 	movwi	0[FSR0]
-	goto	_SF_exit	
+	goto	_SF_exit
 
 _SF_check_dir
 	; Was wIndex0 direction (bit 7) a zero or one
-	;   if 1 then inPtr=0x00  
+	;   if 1 then inPtr=0x00
 	;   else
 	;   *inPtr = 0x88
 	;  Setup W to be 0x00, and over-ride if endpointDir 1
@@ -692,7 +692,7 @@ _SF_check_dir
 	btfsc 	SETUP_wIndex0,7
 	movlw	0x88
 	movwi	0[FSR0]
-        ; Drop through to SF_exit	
+        ; Drop through to SF_exit
 _SF_exit
 	return
 
@@ -753,7 +753,7 @@ _PSR_SET_CONFIG
 	bsf		StatusBits, status_request_handled
 	; CurrentConfiguration = SetupPacket.wValue0;
 	movf	SETUP_wValue0,W
-	; Was this set to configuration zero (0)... 
+	; Was this set to configuration zero (0)...
 	BANKSEL CurrentConfiguration
 	movwf	CurrentConfiguration
 	btfss 	STATUS,Z
@@ -765,7 +765,7 @@ _PSR_SET_CONFIG
 	movwf	DeviceState
 	goto	_PSR_exit
 
-_PSR_config_not_0	
+_PSR_config_not_0
 	; Not zero config - store state as CONFIGURED
 	movlw	STATE_CONFIGURED
 	movwf	DeviceState
@@ -850,7 +850,7 @@ _PSR_GET_INTF
 	movwf	outPtrL
 	movlw	high ControlTransferBuffer
 	movwf	outPtrH
-	; set the length to 1 
+	; set the length to 1
 	movlw	1
 	movwf	wCount
 	goto	_PSR_exit
@@ -884,11 +884,11 @@ InDataStage:
 	movwf	bufferSize
 	goto	_IDS_clear_BD
 _IDS_buffer_E0SZ
-	; else 
+	; else
 	;   bufferSize = E0SZ
 	movlw	E0SZ
 	movwf	bufferSize
-    ; Fall through to IDS_clear_BD	
+    ; Fall through to IDS_clear_BD
 	; W to hold 'bufferSize'
 _IDS_clear_BD
 	;   Load the high two bits of the byte count into BC8:BC9
@@ -932,7 +932,7 @@ _IDS_clear_BD
 _IDS_copy_loop
 	; Copy from outPtr (FSR1) to the ControlTransferBuffer (inPtr::FSR0)
 	moviw	FSR1++
-	movwi	FSR0++ 
+	movwi	FSR0++
 	decfsz	bufferSize,F
 	goto	_IDS_copy_loop
 
@@ -946,7 +946,7 @@ _IDS_copy_loop
 	movwf	outPtrH
 
 _IDS_exit
-	return	
+	return
 
 ;; Data stage for a Control Transfer that reads data from the host
 OutDataStage:
@@ -961,7 +961,7 @@ OutDataStage:
 	movwf	FSR1L
 	movlw	high ControlTransferBuffer
 	movwf	FSR1H
-	
+
 	; Pull message length from the SIE BD's
 	BANKSEL BANKED_EP0OUT_STAT
 	movf	BANKED_EP0OUT_CNT,W
@@ -1003,7 +1003,7 @@ SetupStage:
 	movlw	STAGE_SETUP
 	BANKSEL CtrlTransferStage
 	movwf	CtrlTransferStage
- 	bcf  	StatusBits, status_request_handled ; Clear handled bit 
+ 	bcf  	StatusBits, status_request_handled ; Clear handled bit
 	clrf	wCount         ; No bytes copied yet
 
     ; See if this is a standard (as definded in USB chapter 9) request
@@ -1036,7 +1036,7 @@ SetupStage:
 	goto	_SetupStage_exit
 
 _ss_device_to_host:
-	; Was this a device to host transfer (0x8n) 
+	; Was this a device to host transfer (0x8n)
 	BANKSEL SetupPacket
 	btfss	SETUP_bmRequestType,7 ; if &0x80
 	goto	_host_to_device
@@ -1048,7 +1048,7 @@ _ss_device_to_host:
 	BANKSEL	wCount
 	subwf	wCount,w   ; wCount > wLength C=0
 	btfss   STATUS,C
-    goto    _ss_in_data 
+    goto    _ss_in_data
 	; wLength is smaller, so use that instead
 	BANKSEL SETUP_wLengthL
 	movf	SETUP_wLengthL,W
@@ -1065,7 +1065,7 @@ _ss_in_data:
 	BANKSEL	CtrlTransferStage
 	movwf	CtrlTransferStage
 
-	; Reset BD's for EP0OUT 
+	; Reset BD's for EP0OUT
 	BANKSEL BANKED_EP0OUT_STAT
 	movlw	E0SZ
 	movwf	BANKED_EP0OUT_CNT
@@ -1090,7 +1090,7 @@ _ss_in_data:
 	goto	_SetupStage_exit
 
 _host_to_device:
-	; Update state to refelect receiving data 
+	; Update state to refelect receiving data
 	logch	'H', 0
 	movlw	STAGE_DATA_OUT
 	BANKSEL	CtrlTransferStage
@@ -1120,9 +1120,9 @@ _host_to_device:
 
 _SetupStage_exit:
 	BANKSEL	UCON
-   	bcf	UCON,PKTDIS 
+   	bcf	UCON,PKTDIS
 	return
-	
+
 ; Configures the buffer descriptor for endpoint 0 so that it is waiting for
 ; the status stage of a control transfer.
 WaitForSetupStage:
@@ -1155,8 +1155,8 @@ ProcessControlTransfer:
 	btfss	STATUS,Z
     goto	_PCT_EP0IN
 	; then this was Endpoing 0:OUT
- 	; Was this PID = 0x0D 
-	BANKSEL	BANKED_EP0OUT_STAT 
+ 	; Was this PID = 0x0D
+	BANKSEL	BANKED_EP0OUT_STAT
 	movf	BANKED_EP0OUT_STAT,W
 	andlw	0x3C  ; Mask PID from middle of BD0STAT
 	xorlw	(0x0D<<2) ; (PID = 0x0D <<2)
@@ -1201,7 +1201,7 @@ _PCT_EP0IN:
 	xorlw	0x04
 	btfss	STATUS,Z
 	goto	_PCT_exit
-	logch '<',0	
+	logch '<',0
 	; Then this was Endpoint 0: IN
 	; Was this a set address packet
 	; 	((UADDR==0) && (DeviceState == STATE_ADDRESS))
@@ -1391,7 +1391,7 @@ BusReset:
 
 	; Remote wakeup is off by default
 	bcf		StatusBits,status_remote_wakeup
-	; Self powered is off by default 
+	; Self powered is off by default
 	bcf		StatusBits,status_self_powered
 	; Clear active configuration
 	BANKSEL CurrentConfiguration
@@ -1410,10 +1410,10 @@ ProcessUSBTransactions:
 	btfss   STATUS,Z
 	goto	_PUT_UNSUSPEND
  	; then clear all interrupts
-	BANKSEL	UIR 
+	BANKSEL	UIR
 	clrf	UIR
 	BANKSEL PIR2
-	bcf		PIR2,USBIF 
+	bcf		PIR2,USBIF
 	; and exit
 	return
 
@@ -1425,16 +1425,16 @@ _PUT_UNSUSPEND:
 	btfss	UIE,ACTVIE
 	goto	_PUT_SUSPEND
 	; Wakeup from suspend
-	pagesel UnSuspend	
+	pagesel UnSuspend
 	call	UnSuspend
-	pagesel	$	
+	pagesel	$
   	BANKSEL UIR
 	bcf		UIR,ACTVIF
 
 _PUT_SUSPEND:
-    ; If we are supposed to be suspended... 
+    ; If we are supposed to be suspended...
 	btfss	UCON,SUSPND
-	goto	_PUT_RESET	
+	goto	_PUT_RESET
 	; then cease performing any processing
 	clrf	UIR
 	BANKSEL PIR2
@@ -1466,7 +1466,7 @@ _PUT_IDLE:
 	pagesel $
 
 	BANKSEL UIR
-  	bcf		UIR,IDLEIF	
+  	bcf		UIR,IDLEIF
 
 _PUT_SOF:
     ; If this was a Start of Frame (SOF)...
@@ -1477,7 +1477,7 @@ _PUT_SOF:
 	; Then clear the SOF
 	pagesel StartOfFrame
 	call	StartOfFrame
-	pagesel $ 
+	pagesel $
 	BANKSEL	UIR
 	bcf		UIR,SOFIF
 
@@ -1536,7 +1536,7 @@ _PUT_PCT:
 	mlogf	SetupPacket+5
 	mlogf	SetupPacket+6
 	mlogf	SetupPacket+7
-	mlogend	
+	mlogend
 	pagesel	ProcessControlTransfer
 	call	ProcessControlTransfer
 	pagesel $
@@ -1556,7 +1556,7 @@ _PUT_PCT:
 ;
 	loghex	1,LOG_SPACE
 	logf	BANKED_EP0IN_STAT
-	logch '.',LOG_NEWLINE 
+	logch '.',LOG_NEWLINE
 	BANKSEL	UIR
 	bcf		UIR,TRNIF
 

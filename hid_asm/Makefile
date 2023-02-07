@@ -12,10 +12,10 @@
 OUT = hid
 
 # Assembly files to assemble
-ASM = hid_main.asm
+ASM = hid_main.asm 
 
 # INC files
-INC = usb.asm usb_descriptors.inc
+INC = usb.asm usb_descriptors.inc hid_codes.inc wyse_keymap.inc
 
 # The SDCC-specific (case sensitive) part number of the chip
 # (use `make list-devices` if not known)

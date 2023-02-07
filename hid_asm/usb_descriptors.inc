@@ -37,7 +37,7 @@ SERIAL_NUMBER_DIGIT_CNT equ     4
 #define SSER 0x03   ; Serial Number String Index
 #define SCON 0x00   ; Configuration String Index
 
-#define MAX_CODE_SIZE (0x1F80) 
+#define MAX_CODE_SIZE (0x1F80)
 #define HIGH_AVAIL_FLASH (0x1F80)
 
 #define DEVICE_DESC_LEN  0x12
@@ -54,7 +54,7 @@ HID_REPORT_BYTE_COUNT equ 0x08
 ;***********************
 ;* Descriptors         *
 ;***********************
-;	org	MAX_CODE_SIZE-ALL_DESC_TOTAL_LEN
+	;org	MAX_CODE_SIZE-ALL_DESC_TOTAL_LEN
 	org 0x1E00
 ; Device Descriptor
 DESCRIPTOR_ADRH equ high $
