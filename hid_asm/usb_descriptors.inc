@@ -34,7 +34,7 @@ SERIAL_NUMBER_DIGIT_CNT equ     4
 ; Strings
 #define SMAN 0x01   ; Manufacturer Name String Index
 #define SPRD 0x02   ; Product Name String Index
-#define SSER 0x00   ; Serial Number String Index
+#define SSER 0x03   ; Serial Number String Index
 #define SCON 0x00   ; Configuration String Index
 
 #define MAX_CODE_SIZE (0x1F80) 
@@ -45,10 +45,7 @@ SERIAL_NUMBER_DIGIT_CNT equ     4
 #define HID_DESC_LEN   HidDescriptorSize
 #define HID_REPORT_LEN  0x3F
 
-#define STR_DESC0_SIZE (0x04)
-#define STR_DESC1_SIZE (0x18)
-#define STR_DESC2_SIZE (0x2A)
-#define STR_DESC3_SIZE (0x0A)
+
 #define ALL_STRINGS_LEN (STR_DESC0_SIZE + STR_DESC1_SIZE + STR_DESC2_SIZE + STR_DESC3_SIZE)
 #define ALL_DESC_TOTAL_LEN (DEVICE_DESC_LEN + CONFIG_DESC_LEN + HID_DESC_LEN + + HID_REPORT_LEN +ALL_STRINGS_LEN)
 
@@ -57,7 +54,8 @@ HID_REPORT_BYTE_COUNT equ 0x08
 ;***********************
 ;* Descriptors         *
 ;***********************
-	org	MAX_CODE_SIZE-ALL_DESC_TOTAL_LEN
+;	org	MAX_CODE_SIZE-ALL_DESC_TOTAL_LEN
+	org 0x1E00
 ; Device Descriptor
 DESCRIPTOR_ADRH equ high $
 DeviceDescriptor
@@ -167,32 +165,39 @@ HIDReport 	; Report For Keyboard
     dt	0x81, 0x00                  ;   INPUT (Data,Ary,Abs)
     dt	0xc0                           ; END_COLLECTION
 
+#define STR_DESC0_SIZE (0x04)
+
 StringDescriptor0
 	dt	0x04 		; Size
 	dt	0x03		; DSC_STR
 	dt	0x09,0x04	;
 
-; Manufacturer String
+; iManufacturer String
+#define STR_DESC1_SIZE (0x18)
 StringDescriptor1
-	dt 0x18
+	dt STR_DESC1_SIZE
 	dt 0x03
 	dt 'D',0,'I',0,'Y',0,' ',0,'D',0,'e',0,'v',0,'i',0,'c',0,'e',0,'s',0
 
+; iPROD String
+#define STR_DESC2_SIZE (0x2A)
 StringDescriptor2
-	dt 0x2A
+	dt STR_DESC2_SIZE
 	dt 0x03
 	dt '1',0,'6',0,'F',0,'1',0,'4',0,'5',0,'5',0,' ',0
-        dt 'H',0,'I',0,'D',0,' ',0,'K',0,'e',0,'y',0,'b',0
+    dt 'H',0,'I',0,'D',0,' ',0,'K',0,'e',0,'y',0,'b',0
  	dt 'o',0,'a',0,'r',0,'d',0
 
+; iSerial Number
 ; extract nibbles from serial number
 SN1     equ     (SERIAL_NUMBER>>12) & 0xF
 SN2     equ     (SERIAL_NUMBER>>8) & 0xF
 SN3     equ     (SERIAL_NUMBER>>4) & 0xF
 SN4     equ     SERIAL_NUMBER & 0xF
 
+#define STR_DESC3_SIZE (0x0A)
 StringDescriptor3
-        dt      0x0A				; bLength
+        dt      STR_DESC3_SIZE			; bLength
         dt      0x03            		; bDescriptorType (STRING)
         dt      '0'+SN1+((SN1>9)*7), 0x00       ; convert hex digits to ASCII
         dt      '0'+SN2+((SN2>9)*7), 0x00

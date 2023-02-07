@@ -12,7 +12,7 @@
 OUT = hid
 
 # Assembly files to assemble
-ASM = main.asm
+ASM = hid_main.asm
 
 # INC files
 INC = usb.asm usb_descriptors.inc
@@ -20,11 +20,6 @@ INC = usb.asm usb_descriptors.inc
 # The SDCC-specific (case sensitive) part number of the chip
 # (use `make list-devices` if not known)
 AS_DEVICE = 16f1455
-
-# Environment Variables (SerialNo) passed in
-ifdef SERIAL_NUMBER
-SERNUM = -DSERIAL_NUMBER=${SERIAL_NUMBER}
-endif
 
 
 ########## Build settings ##########
@@ -41,7 +36,7 @@ HEX = $(OUT).hex
 
 # Link
 $(HEX): $(ASM) $(INC)
-	$(AS) -I .. -p$(AS_DEVICE) -o $@ $(SERNUM) $<
+	$(AS) -I .. -p$(AS_DEVICE) -o $@ $<
 
 # Disassemble
 dis: $(HEX)
