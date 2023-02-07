@@ -33,7 +33,6 @@ PORT = -p /dev/ttyACM0
 
 HEX = $(OUT).hex
 
-
 # Link
 $(HEX): $(ASM) $(INC)
 	$(AS) -I .. -p$(AS_DEVICE) -o $@ $<
@@ -46,9 +45,18 @@ dis: $(HEX)
 flash: $(HEX)
 	sudo $(PROG) $(PORT) $(HEX)
 
+# KEYFLASH
+keyflash: keymap.hex
+	sudo $(PROG) $(PORT) $<
+
+# keymap
+keymap: wyse_keymap.inc hid_codes.inc
+	$(AS) -I .. -p$(AS_DEVICE) -o $@ $<
+
 # Clean
 clean:
-	rm -f $(ASM:.asm=.lst) $(HEX) $(OUT).cod $(OUT).lst
+	rm -f $(ASM:.asm=.lst) $(HEX) $(OUT).cod $(OUT).lst \
+	rm -f keymap.lst keymap.hex keymap.cod
 
 .PHONY: all flash clean dis
 

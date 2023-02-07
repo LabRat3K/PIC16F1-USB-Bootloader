@@ -108,4 +108,5 @@ KEYMAP2
 	retlw KEY_SEMICOLON
 	retlw KEY_BACKSPACE ;7F
 
+	end
 
