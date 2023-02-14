@@ -32,7 +32,7 @@ KEYMAP2
 	retlw KEY_W
 	retlw KEY_Q
 	retlw KEY_R
-	retlw KEY_U
+	retlw KEY_T
 	retlw KEY_Y
 	retlw KEY_NONE
    retlw KEY_APOSTROPHE		 ;8

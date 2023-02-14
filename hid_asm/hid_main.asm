@@ -40,9 +40,9 @@ LOGGING_ENABLED equ 0
 
 
 ; LED definitions
-#define LED_NUMLOCK              LATA,LATA4
+#define LED_NUMLOCK              LATA,LATA5
 #define LED_CAPSLOCK             LATC,LATC5
-#define LED_SCROLLOCK            LATC,LATC2
+#define LED_SCROLLOCK            LATA,LATA4
 
 ; ----------------
 ; Global Variables
@@ -53,7 +53,7 @@ LOGGING_ENABLED equ 0
 #define gCapsLock    (6)	; Track CAPSLOCK state (used to turn on/off the CAPSLOCK LED)
 
  CBLOCK end_bank0_minor_vars
-	gWyseTemp        ; 0x78
+	gWyseTemp       ; 0x78
 	gKeyIndex       ; 0x79
 	gWyseBuffer     ; 0x7A
 	gScanIndex		; 0x7B 0 to 19
@@ -115,9 +115,10 @@ _app_interrupt:
 ; -------------------------------------------------
 InitializeSystem:
 	BANKSEL	TRISC
-	movlw	0x00    ; Set RC3&RC2 as output 
+	movlw	0x08    ; Set RC3 as input
 	movwf	TRISC
-	movlw	0x28	; A5 & A3 as input
+
+	movlw	0x08	; A3 as input
 	movwf	TRISA
 
 	BANKSEL LATA
@@ -195,11 +196,11 @@ EnableInterrupts:
 ; Wyse Defines 
 ; ---------------------
    ; Clock & Data PIN Definitions
-   #define KBD_CLOCK LATC,3
-   #define KBD_CLOCK_TRIS  TRISC,3
+   #define KBD_CLOCK LATC,4
+   #define KBD_CLOCK_TRIS  TRISC,4
 
-   #define KBD_DATA  PORTA,5
-   #define KBD_DATA_TRIS TRISA,5
+   #define KBD_DATA  PORTC,3
+   #define KBD_DATA_TRIS TRISC,3
 
 
 ; ---------------------
@@ -513,7 +514,7 @@ ProcessIncommingData:
 	bsf		LED_CAPSLOCK
         ; LED_SCROLLOCK = (HIDRxBuffer[0] & 0x04)==0;
 	bcf		LED_SCROLLOCK
-	btfss	WREG,3
+	btfss	WREG,2
 	bsf		LED_SCROLLOCK
 
         ; gCapsLock = (HIDRxBuffer[0] & 0x02)>0;
@@ -731,6 +732,14 @@ _main_loop:
 	PAGESEL	ProcessIO
 	call	ProcessIO
 
+	PAGESEL device_reset
+	BANKSEL PORTA
+	btfss	PROG_BUTTON
+	goto	device_reset
+
+	PAGESEL $
+
+
  if LOGGING_ENABLED
 	PAGESEL	log_service
 	call	log_service
@@ -842,6 +851,13 @@ _main_spin_action
  endif
 
 	goto	_main_spin
+
+device_reset
+	banksel LATA
+	bsf	LED_NUMLOCK
+	bsf	LED_CAPSLOCK
+	bcf	LED_SCROLLOCK
+	reset
 
  include "wyse_keymap.inc"
 	end
