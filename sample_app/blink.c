@@ -113,6 +113,12 @@ int app_main(void)
 
   // Global Interrupt Enable
   INTCONbits.GIE = 1;
-  while (1) { }
+  while (1) {
+     if (PORTAbits.RA3 == 0) {
+	__asm
+	reset
+	__endasm;
+     }
+   }
 }
 
