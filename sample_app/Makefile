@@ -12,7 +12,7 @@
 OUT = blink
 
 # Source files to compile
-SRC = blink.c
+SRC = blink.c log.c
 
 # Assembly files to assemble
 ASM = crt_bootloader_512.S

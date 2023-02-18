@@ -32,6 +32,13 @@
 #include <pic14regs.h>
 #include "usb_bootloader_config.h"
 
+#include "log.h"
+
+#define LED LATCbits.LATC2
+#define SWITCH PORTAbits.RA3
+#define ON (0)
+#define OFF (1)
+
 APP_CONFIG(USB_BUS_POWERED, 20 MILLIAMPS);
 // Timer1 configured for approx 15 Hz, so loop 7 times to get a short flash
 #define LOOP_COUNTDOWN (7)
@@ -53,31 +60,17 @@ void app_interrupt(void)
         loop_counter=LOOP_COUNTDOWN;
         switch(display_phase) {
           case 0:
-            LATC ^= 0x04; // Amber ON
-            LATC |= 0x08; // Blue  OFF
-            LATA |= 0x10; // Green OFF
+            LED = ON; 
             break;
           case 1:
-            LATC |= 0x04;  // Amber OFF
-            LATC ^= 0x08;  // Blue  ON
-            LATA |= 0x10;  // Green OFF
+            LED = OFF;
             break;     
-          case 2:
-            LATC |= 0x0C;  // Amber & Blue OFF
-            LATA ^= 0x10;  // Green ON
-            break;
-          default:
-          case 3: // Clear the Three Flags
-            LATC |= 0x0C;  // Amber & Blue OFF
-            LATA |= 0x10;  // Green OFF
-            break;
         }
         display_phase++;
-        display_phase%=4; // Mod the loop_counter to 0-3
+        display_phase%=2; // Mod the loop_counter to 0-3
      }
   }
 }
-
 
 int app_main(void)
 {
@@ -85,18 +78,17 @@ int app_main(void)
   // RA4 - is DIGITIAL NOT ANALOG!!
   ANSELA = 0;
 
-  // RC2&3 (AMBER & BLUE LEDS) as outputs
-  TRISC &= 0xF3;
+ 
+  // PORTC
+  // TRISC: set to 0 for OUTPUT or 1 for INPUT 
+  // LED: C2 - OUTPUT
+  // PORT A3 - INPUT (switch) 
+  TRISCbits.TRISC2 = 0; // LED as an output
 
-  // RA4 (POWER LED (Green)) as an output
-  TRISA &= 0xEF;
+  // RA3 : SWITCH (input)
+  TRISAbits.TRISA3 = 1;
 
-  // Green
-  LATA &= 0xEF; // Green ON
-  //LATA |= 0x10; // Green OFF
-
-  //LATC &= 0xF3; // Blue & Amber ON
-  LATC |= 0x0C; // Blue & Amber OFF
+  LED = ON; // Turn on STATUS led 
 
   // Enable TIMER1
   TMR1H = TMR1L = 0;
@@ -113,12 +105,28 @@ int app_main(void)
 
   // Global Interrupt Enable
   INTCONbits.GIE = 1;
+
+  uart_init();
+  log_init();
+  log_char('t',0);
+  log_char('e',0);
+  log_char('s',0);
+  log_char('t',0);
+  log_char(0x8A,FMT_HEX|FMT_SPACE|FMT_EOL);
+
+  set_multi(4, FMT_HEX|FMT_SPACE);
+  mlog_hex(0x01);
+  mlog_hex(0x02);
+  mlog_hex(0x03);
+  mlog_hex(0x42);
+ 
   while (1) {
-     if (PORTAbits.RA3 == 0) {
-	__asm
+     log_service();
+     if (SWITCH==ON) {
+        __asm
 	reset
 	__endasm;
      }
-   }
+  }
 }
 
