@@ -30,34 +30,46 @@
 
 #ifndef USB_H
 #define	USB_H
-#include <pic14regs.h>
+//#include <pic14regs.h>
+#include <pic16f1455.h>
+#include "usb_shared.h"
 
-#ifndef uint8_t
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-#endif
-
-
-// Definitions
-#define HID_REPORT_BYTE_COUNT  0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define HID_INTERFACE_NUMBER   0x00 // Interface For our HID
-
-// Global Variables
-extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, chap 9.1.1): used in IsUsbReady() macro below.
-extern volatile uint8_t HIDTxBuffer[HID_REPORT_BYTE_COUNT];
-extern volatile uint8_t HIDRxBuffer[HID_REPORT_BYTE_COUNT];
-
-// Shared Macro calls
+// Macros
+#define PTR16(x) ((unsigned int)(((unsigned long)x) & 0xFFFF))
+#define LSB(x) (x & 0xFF)
+#define MSB(x) ((x & 0xFF00) >> 8)
+#define ClearUsbInterruptFlag(x)        UIR &= ~(x)
 #define IsUsbReady ((DeviceState == 0x05) && (UCONbits.SUSPND==0))
 #define UsbInterrupt PIR2bits.USBIF
+#define VIDL LSB(VendorId)  // Vendor Id Low Byte (LSB)
+#define VIDH MSB(VendorId)  // Vendor Id High Byte (MSB)
+#define PIDH MSB(ProductId) // Product Id High Byte (MSB)
+#define PIDL LSB(ProductId) // Product Id Low Byte (LSB)
+#define RELH MSB(ReleaseNo) // Release Number High Byte (MSB)
+#define RELL LSB(ReleaseNo) // Release Number Low Byte (LSB)
+#define INTF InterfaceCount // Total Count of Interfaces
+#define IHID HidInterfaceNumber
+#define E0SZ Endpoint0BufferSize
+#define CONFIG_HEADER_SIZE      0x09 // Configuration descriptor header size (see UsbDescriptors.h) - Pretty much always 9 :)
 
-// Exported USB Functions
+//#include <GenericTypeDefs.h>
+
+// Structures
+typedef struct _BufferInfo
+{
+    uint8_t Size;
+    uint8_t *Buffer;
+} BufferInfo;
+
+// Global Variables
+extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, chap 9.1.1)
+
+// USB Functions
 void InitializeUSB(void);
 void EnableUSBModule(void);
-void HIDSend(void);
+void HIDSend(uint8_t InterfaceNo);
 void ProcessUSBTransactions(void);
-void ReArmInterface(void);
-uint8_t IsUsbDataAvailable(void);
+void ReArmInterface(uint8_t InterfaceNo);
+uint8_t IsUsbDataAvailable(uint8_t InterfaceNo);
 
 #endif	/* USB_H */
-

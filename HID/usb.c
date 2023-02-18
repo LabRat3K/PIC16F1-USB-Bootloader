@@ -1,28 +1,47 @@
 /*
- * File:   Usb.asm
- * Hand coded by Andrew Williams, based on C source by 
+ * File:   Usb.c
  * Author: Szymon Roslowski
  *
  * Created on 13 October 2014, 17:46
- * Tweaked Jan 23, 2023 by Andrew Williams (SDCC compatible)
  *
  * Firmware framework for USB I/O on PIC 16F1455 (and siblings)
  *
+ * Based On
+ *
+ * Firmware framework for USB I/O on PIC 18F2455 (and siblings)
+ * Copyright (C) 2005 Alexander Enzmann
+ * adapted to MCC18 by Alberto Maccioni on 1/8/09
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111 USA
+ * or see <http://www.gnu.org/licenses/>
  */
-
 
 #include "usb.h"
 #include "usb_descriptors.h"
 #include "pic16f1455.h"
+#include "log.h"
 
 /***********************/
 /* Local Definitions   */
 /***********************/
+volatile uint8_t DeviceState;
 // Commands
 #define GET_STATUS                  0x00
 #define CLEAR_FEATURE               0x01
 #define SET_FEATURE                 0x03
-#define SET_STATE_ADDRESS           0x05
+#define SET_ADDRESS                 0x05
 #define GET_DESCRIPTOR              0x06
 #define SET_DESCRIPTOR              0x07
 #define GET_CONFIGURATION           0x08
@@ -56,12 +75,12 @@
 #define ENDPOINT_HALT               0x00
 
 // Device states (Chap 9.1.1)
-#define STATE_DETACHED              0x00
-#define STATE_ATTACHED              0x01
-#define STATE_POWERED               0x02
-#define STATE_DEFAULT               0x03
-#define STATE_ADDRESS               0x04
-#define STATE_CONFIGURED            0x05
+#define DETACHED                    0x00
+#define ATTACHED                    0x01
+#define POWERED                     0x02
+#define DEFAULT                     0x03
+#define ADDRESS                     0x04
+#define CONFIGURED                  0x05
 
 /* Interrupt */
 #define USB_SOF                     0x40
@@ -83,10 +102,10 @@
 #define BC8                         0x01 // Byte count bit 8
 
 // Control Transfer Stages - see USB spec chapter 5
-#define STAGE_SETUP                 0x00 // Start of a control transfer (followed by 0 or more data stages)
-#define STAGE_DATA_OUT              0x01 // Data from host to device
-#define STAGE_DATA_IN               0x02 // Data from device to host
-#define STAGE_STATUS                0x03 // Unused - if data I/O went ok, then back to Setup
+#define SETUP_STAGE                 0x00 // Start of a control transfer (followed by 0 or more data stages)
+#define DATA_OUT_STAGE              0x01 // Data from host to device
+#define DATA_IN_STAGE               0x02 // Data from device to host
+#define STATUS_STAGE                0x03 // Unused - if data I/O went ok, then back to Setup
 
 // Hardware
 #define USB_RESET_FLAG              UIRbits.URSTIF
@@ -105,7 +124,7 @@ typedef struct _BDT
 {
     uint8_t Stat;
     uint8_t Cnt;
-    uint16_t Addr;
+    uint16_t ADDR;
 } BDT; //Buffer Descriptor Table
 
 typedef struct _Interface
@@ -132,121 +151,121 @@ typedef struct _setupPacketStruct
 /***********************/
 /* Local Variables     */
 /***********************/
-// Bit index of Status Bits
-#define  status_remote_wakeup 	 (1)
-#define  status_self_powered     (2)
-#define  status_request_handled  (3)
-#define  status_transfer_type    (4)
 
-#define type_RAM (0x00)
-#define type_ROM (1<<status_transfer_type)
-
-uint8_t StatusBits;    // Global in the 0x70-7F range
-
+uint8_t RemoteWakeup;
 uint8_t DeviceAddress;
+uint8_t SelfPowered;
 uint8_t CtrlTransferStage; // Holds the current stage in a control transfer
 uint8_t CurrentConfiguration;
-
+uint8_t HIDPostProcess;    // Set to 1 if HID needs to process after the data stage
+uint8_t RequestHandled;    // Set to 1 if request was understood and processed.
+// HID Class variables
 uint8_t HidIdleRate;
-uint8_t HidProtocol;       // [0] Boot Protocol [1] Report Protocol
+uint8_t HidProtocol; // [0] Boot Protocol [1] Report Protocol
+uint8_t HidRxLen;    // # of bytes put into buffer
 
 const uint8_t *ROMoutPtr;  // Data to send to the host
 uint8_t *outPtr;           // Data to send to the host
 uint8_t *inPtr;            // Data from the host
-uint16_t wCount;           // Number of bytes of data
+uint8_t transferType;	// 0=ram 1=rom
+uint16_t wCount;            // Number of bytes of data
 
 volatile setupPacketStruct SetupPacket;
 volatile uint8_t ControlTransferBuffer[E0SZ];
 
-volatile uint8_t DeviceState;
+
+//volatile __data __at(0x0E99) uint8_t EndpointFlags[InterfaceCount]; // Endpoint Flag Registers
+// LabRat - redefine an overlay for the UEPx registers
+#define EndpointFlags  ((uint8_t *)(&(UEP1)))
 
 // !!! It is ABSOLUTELY VITAL for the start of BDTs to point to 0x2000.
 // !!! Won't work without it.
 // *** LABRAT: SDCC needed to declare the BANKED start address (as we are only using EP0 & 1 .. fits in a single bank so no need to worry)
 //volatile Interface Interfaces[InterfaceCount + 1] @ 0x2000;
-volatile __data __at (0x020) Interface Interfaces[InterfaceCount + 1];
+volatile __data __at (0x20) Interface Interfaces[InterfaceCount + 1];
 // ... The hours I've waisted before I found out... :(
 
 
 /***********************/
 /* Implementation      */
 /***********************/
-uint8_t IsUsbDataAvailable()
+uint8_t IsUsbDataAvailable(uint8_t InterfaceNo)
 {
-   __asm
-	BANKSEL BANKED_EP1OUT_STAT
-	btfsc BANKED_EP1OUT_STAT,UOWN
-	retlw 0x00
-        movfw BANKED_EP1OUT_CNT
-	return
-   __endasm;
-   return 0x00;
+    if(InterfaceNo >= InterfaceCount) return 0;
+    if(!(Interfaces[InterfaceNo + 1].Output.Stat & UOWN))
+    {
+        return Interfaces[InterfaceNo + 1].Output.Cnt;
+    }
+    return 0;
 }
 
-void ReArmInterface()
+void ReArmInterface(uint8_t InterfaceNo)
 {
-  __asm
-	BANKSEL BANKED_EP1OUT_STAT
-	btfsc	BANKED_EP1OUT_STAT,UOWN
-	return
-	movlw	HID_REPORT_BYTE_COUNT
-	movwf	BANKED_EP1OUT_CNT
+    //If there is data received in the recieved buffer
+    //Indicate that we have processed it and get the endpoint
+    //ready to receive next packet.
 
- 	movlw	(1<<DTSEN)
-	btfss	BANKED_EP1OUT_STAT,DTS
-	iorlw	(1<<DTS)
-	movwf	BANKED_EP1OUT_STAT
-	bsf	BANKED_EP1OUT_STAT,UOWN
-  __endasm;
+    if(!(Interfaces[InterfaceNo + 1].Output.Stat & UOWN))
+    {
+        //Interfaces[InterfaceNo + 1].Output.Cnt =  *BufferSizes[0];
+        Interfaces[InterfaceNo + 1].Output.Cnt =  Buffers[(InterfaceNo * 2) + 1].Size;
+        //Interfaces[InterfaceNo + 1].Output.Cnt =  sizeof(HIDRxBuffer);
+
+  //      HIDRxBuffer
+        if(Interfaces[InterfaceNo + 1].Output.Stat & DTS) {
+            Interfaces[InterfaceNo + 1].Output.Stat = DTSEN;
+            Interfaces[InterfaceNo + 1].Output.Stat |= UOWN;
+        } else{
+            Interfaces[InterfaceNo + 1].Output.Stat = DTS | DTSEN;
+            Interfaces[InterfaceNo + 1].Output.Stat |= UOWN ;
+        }
+    }
 }
 
-void HIDSend()
+void HIDSend(uint8_t InterfaceNo)
 {
-  __asm
-	BANKSEL BANKED_EP1IN_STAT
-	btfsc	BANKED_EP1IN_STAT,UOWN
-	return
+    // If the CPU still owns the SIE, then don't try to send anything.
+    if (Interfaces[InterfaceNo + 1].Input.Stat & UOWN) return;
+    // Toggle the data bit and give control to the SIE
 
-	movlw	HID_REPORT_BYTE_COUNT
-	movwf	BANKED_EP1IN_CNT
+    //Interfaces[InterfaceNo + 1].Input.Cnt = sizeof(HIDTxBuffer);
+    Interfaces[InterfaceNo + 1].Input.Cnt =  Buffers[InterfaceNo * 2].Size;
 
- 	movlw	(1<<DTSEN)
-	btfss	BANKED_EP1IN_STAT,DTS
-	iorlw	(1<<DTS)
-	movwf	BANKED_EP1IN_STAT
-	bsf	BANKED_EP1IN_STAT,UOWN
-  __endasm;
+    if(Interfaces[InterfaceNo + 1].Input.Stat & DTS) {
+        Interfaces[InterfaceNo + 1].Input.Stat = DTSEN;
+        Interfaces[InterfaceNo + 1].Input.Stat |= UOWN;
+    } else {
+        Interfaces[InterfaceNo + 1].Input.Stat = DTS | DTSEN;
+        Interfaces[InterfaceNo + 1].Input.Stat |= UOWN;
+    }
 }
 
 // After configuration is complete, this routine is called to initialize
 // the endpoints (e.g., assign buffer addresses).
 void HIDInitEndpoints(void)
 {
-   __asm
-	BANKSel UEP1
-	movlw 	0x1E
-	movwf 	UEP1
+    uint8_t i = 0;
 
-        BANKSEL BANKED_EP1OUT_STAT
-	movlw 	HID_REPORT_BYTE_COUNT
-        movwf 	BANKED_EP1OUT_CNT
+    HidRxLen =0;
 
-	movlw 	low _HIDRxBuffer
-	movwf	BANKED_EP1OUT_ADRL
-	movlw	high _HIDRxBuffer
-	movwf   BANKED_EP1OUT_ADRH
+    for (i = 0 ; i < InterfaceCount; i++)
+    {
+        // Turn on both in and out for this endpoint
+        EndpointFlags[i] = 0x1E;
+        //Interfaces[i+1].Output.Cnt = sizeof(HIDRxBuffer);
+        Interfaces[i + 1].Output.Cnt = Buffers[(i * 2) + 1].Size;
 
-       	movlw   (1<<DTSEN)
-	movwf	BANKED_EP1OUT_STAT
-	bsf	BANKED_EP1OUT_STAT,UOWN
+        //Interfaces[i+1].Output.ADDR = PTR16(&HIDRxBuffer);
+        Interfaces[i + 1].Output.ADDR = PTR16(Buffers[(i * 2) + 1].Buffer);
 
-	movlw	low _HIDTxBuffer
-	movwf	BANKED_EP1IN_ADRL
-	movlw	high _HIDTxBuffer
-	movwf	BANKED_EP1IN_ADRH
-       	movlw   (1<<DTSEN)
-	movwf	BANKED_EP1IN_STAT
-  __endasm;
+        Interfaces[i + 1].Output.Stat = DTSEN;
+        Interfaces[i + 1].Output.Stat |= UOWN;
+
+        //Interfaces[i + 1].Input.ADDR = PTR16(&HIDTxBuffer);
+        Interfaces[i + 1].Input.ADDR = PTR16(Buffers[(i * 2)].Buffer);
+        Interfaces[i + 1].Input.Stat = DTS;
+
+    }
 }
 
 // Process HID specific requests
@@ -265,17 +284,17 @@ void ProcessHIDRequest(void)
         uint8_t descriptorType  = SetupPacket.wValue1;
         if (descriptorType == HID_DESCRIPTOR)
         {
-            StatusBits |= (1<< status_request_handled);
-            ROMoutPtr = (const uint8_t*) &ConfigurationDescriptor.HIDDescriptor;
+            RequestHandled = 1;
+            ROMoutPtr = (const uint8_t*)&ConfigurationDescriptor.HIDDescriptor;
             wCount = sizeof(ConfigurationDescriptor.HIDDescriptor);
-            StatusBits |=type_ROM;
+            transferType=1;
         }
         else if (descriptorType == REPORT_DESCRIPTOR)
         {
-            StatusBits |= (1<< status_request_handled);
-            ROMoutPtr = (const uint8_t*) HIDReport;
+            RequestHandled = 1;
+            ROMoutPtr = (const uint8_t*)HIDReport;
             wCount = sizeof(HIDReport);
-            StatusBits |=type_ROM;
+            transferType=1;
         }
         else if (descriptorType == PHYSICAL_DESCRIPTOR)
         {   // Do Nothing
@@ -297,34 +316,35 @@ void ProcessHIDRequest(void)
 
     else if (bRequest == SET_REPORT)
     {
-       StatusBits |= (1<< status_request_handled);
+        HIDPostProcess = 1;
+        RequestHandled = 1;
     }
 
     else if (bRequest == GET_IDLE)
     {
-        StatusBits |= (1<< status_request_handled);
+        RequestHandled = 1;
         outPtr = &HidIdleRate;
         wCount = 1;
-        StatusBits |= type_RAM;
+        transferType=0;
     }
 
     else if (bRequest == SET_IDLE)
     {
-       StatusBits |= (1<< status_request_handled);
-       HidIdleRate = SetupPacket.wValue1;
+        RequestHandled = 1;
+        HidIdleRate = SetupPacket.wValue1;
     }
 
     else if (bRequest == GET_PROTOCOL)
     {
-       StatusBits |= (1<< status_request_handled);
+        RequestHandled = 1;
         outPtr = &HidProtocol;
         wCount = 1;
-	StatusBits |= type_RAM;
+	transferType=0;
     }
 
     else if (bRequest == SET_PROTOCOL)
     {
-       StatusBits |= (1<< status_request_handled);
+        RequestHandled = 1;
         HidProtocol = SetupPacket.wValue0;
     }
 
@@ -343,28 +363,28 @@ static void GetDescriptor(void)
 
         if (descriptorType == DEVICE_DESCRIPTOR)
         {
-                StatusBits |= (1<< status_request_handled);
-                ROMoutPtr = (const uint8_t *) &DeviceDescriptor;
+                RequestHandled = 1;
+                ROMoutPtr = (const uint8_t *) & DeviceDescriptor;
                 wCount = sizeof(DeviceDescriptor);
-                StatusBits |=type_ROM;
+                transferType=1;
         }
         else if (descriptorType == CONFIGURATION_DESCRIPTOR)
         {
-                StatusBits |= (1<< status_request_handled);
-                ROMoutPtr = (const uint8_t*) &ConfigurationDescriptor;
+                RequestHandled = 1;
+                ROMoutPtr = (const uint8_t*)&ConfigurationDescriptor;
                 wCount = sizeof(ConfigurationDescriptor);
-		StatusBits |=type_ROM;
+		transferType=1;
         }
         else if (descriptorType == STRING_DESCRIPTOR)
         {
-                StatusBits |= (1<< status_request_handled);
+                RequestHandled = 1;
                 if(descriptorIndex >= StringDescriptorCount)
-                    ROMoutPtr = (const uint8_t*) &StringDescriptor0;
+                    ROMoutPtr = (const uint8_t*)&StringDescriptor0;
                 else
                     ROMoutPtr = *(StringDescriptorPointers + descriptorIndex);
 
                 wCount = *ROMoutPtr;
-		StatusBits |=type_ROM;
+		transferType=1;
         }
         else
         {   // Unknown Descriptor
@@ -384,24 +404,24 @@ static void GetStatus(void)
     if (recipient == 0x00)
     {
         // Device
-        StatusBits |= (1<< status_request_handled);
+        RequestHandled = 1;
         // Set bits for self powered device and remote wakeup.
-        if (StatusBits & status_self_powered)
+        if (SelfPowered)
             ControlTransferBuffer[0] |= 0x01;
-        if (StatusBits & status_remote_wakeup)
+        if (RemoteWakeup)
             ControlTransferBuffer[0] |= 0x02;
     }
     else if (recipient == 0x01)
     {
         // Interface
-        StatusBits |= (1<< status_request_handled);
+        RequestHandled = 1;
     }
     else if (recipient == 0x02)
     {
         // Endpoint
         uint8_t endpointNum = SetupPacket.wIndex0 & 0x0F;
         uint8_t endpointDir = SetupPacket.wIndex0 & 0x80;
-        StatusBits |= (1<< status_request_handled);
+        RequestHandled = 1;
         // Endpoint descriptors are 8 bytes long, with each in and out taking 4 bytes
         // within the endpoint. (See PIC datasheet.)
         inPtr = (uint8_t *)&Interfaces[0].Output + (endpointNum * 8);
@@ -411,11 +431,11 @@ static void GetStatus(void)
             ControlTransferBuffer[0] = 0x01;
     }
 
-    if (StatusBits & (1<<status_request_handled))
+    if (RequestHandled)
     {
-        outPtr = (uint8_t *) &ControlTransferBuffer;
+        outPtr = (uint8_t *)&ControlTransferBuffer;
         wCount = 2;
-	StatusBits |= type_RAM;
+	transferType=0;
     }
 }
 
@@ -430,11 +450,11 @@ static void SetFeature(void)
         // Device
         if (feature == DEVICE_REMOTE_WAKEUP)
         {
-            StatusBits |= (1<< status_request_handled);
+            RequestHandled = 1;
             if (SetupPacket.bRequest == SET_FEATURE)
-                StatusBits |= (1<<status_remote_wakeup);
+                RemoteWakeup = 1;
             else
-                StatusBits &= ~(1<<status_remote_wakeup);
+                RemoteWakeup = 0;
         }
         // TBD: Handle TEST_MODE
     }
@@ -446,7 +466,7 @@ static void SetFeature(void)
         if ((feature == ENDPOINT_HALT) && (endpointNum != 0))
         {
             // Halt endpoint (as long as it isn't endpoint 0)
-            StatusBits |= (1<< status_request_handled);
+            RequestHandled = 1;
             // Endpoint descriptors are 8 bytes long, with each in and out taking 4 bytes
             // within the endpoint. (See PIC datasheet.)
             inPtr = (uint8_t *)&Interfaces[0].Output + (endpointNum * 8);
@@ -470,6 +490,11 @@ void ProcessStandardRequest(void)
 {
     uint8_t request = SetupPacket.bRequest;
 
+    log_byte(SetupPacket.bRequest); // SUCCESS
+    //log_byte(request); // FAIL
+    //log_hex(SetupPacket.bRequest,FMT_HEX|FMT_SPACE); // SUCCESS
+    //log_hex(request,FMT_HEX|FMT_SPACE); //FAIL
+
     if((SetupPacket.bmRequestType & 0x60) != 0x00) {
         // Not a standard request - don't process here.  Class or Vendor
         // requests have to be handled seperately.
@@ -477,14 +502,14 @@ void ProcessStandardRequest(void)
     }
 
 
-    if (request == SET_STATE_ADDRESS)
+    if (request == SET_ADDRESS)
     {
             // Set the address of the device.  All future requests
             // will come to that address.  Can't actually set UADDR
-            // to the new address yet because the rest of the SET_STATE_ADDRESS
+            // to the new address yet because the rest of the SET_ADDRESS
             // transaction uses address 0.
-            StatusBits |= (1<< status_request_handled);
-            DeviceState = STATE_ADDRESS;
+            RequestHandled = 1;
+            DeviceState = ADDRESS;
             DeviceAddress = SetupPacket.wValue0;
     }
     else if (request == GET_DESCRIPTOR)
@@ -493,18 +518,18 @@ void ProcessStandardRequest(void)
     }
     else if (request == SET_CONFIGURATION)
     {
-            StatusBits |= (1<< status_request_handled);
+            RequestHandled = 1;
             CurrentConfiguration = SetupPacket.wValue0;
             // TBD: ensure the new configuration value is one that
             // exists in the descriptor.
             if (CurrentConfiguration == 0)
                 // If configuration value is zero, device is put in
                 // address state (USB 2.0 - 9.4.7)
-                DeviceState = STATE_ADDRESS;
+                DeviceState = ADDRESS;
             else
             {
                 // Set the configuration.
-                DeviceState = STATE_CONFIGURED;
+                DeviceState = CONFIGURED;
 
                 // Initialize the endpoints for all interfaces
                 HIDInitEndpoints();
@@ -515,10 +540,10 @@ void ProcessStandardRequest(void)
     }
     else if (request == GET_CONFIGURATION)
     {
-            StatusBits |= (1<< status_request_handled);
+            RequestHandled = 1;
             outPtr = (uint8_t*)&CurrentConfiguration;
             wCount = 1;
-            StatusBits |= type_RAM;
+            transferType=0;
     }
     else if (request == GET_STATUS)
     {
@@ -533,18 +558,18 @@ void ProcessStandardRequest(void)
     {
             // No support for alternate interfaces.  Send
             // zero back to the host.
-            StatusBits |= (1<< status_request_handled);
+            RequestHandled = 1;
             ControlTransferBuffer[0] = 0;
-            outPtr = (uint8_t*) &ControlTransferBuffer;
+            outPtr = (uint8_t*)&ControlTransferBuffer;
             wCount = 1;
-            StatusBits |= type_RAM;
+            transferType=0;
     }
     else if (request == SET_INTERFACE)
     {
             // No support for alternate interfaces - just ignore.
-            StatusBits |= (1<< status_request_handled);
+            RequestHandled = 1;
     }
-/* LabRat commented out these empty options
+/*
     else if (request == SET_DESCRIPTOR)
     {
     }
@@ -573,7 +598,7 @@ void InDataStage(void)
     Interfaces[0].Input.Stat &= ~(BC8 | BC9); // Clear BC8 and BC9
     Interfaces[0].Input.Stat |= (uint8_t)((bufferSize & 0x0300) >> 8);
     Interfaces[0].Input.Cnt = (uint8_t)(bufferSize & 0xFF);
-    Interfaces[0].Input.Addr = PTR16(&ControlTransferBuffer);
+    Interfaces[0].Input.ADDR = PTR16(&ControlTransferBuffer);
 
     // Update the number of bytes that still need to be sent.  Getting
     // all the data back to the host can take multiple transactions, so
@@ -581,11 +606,9 @@ void InDataStage(void)
     wCount = wCount - bufferSize;
 
     // Move data to the USB output buffer from wherever it sits now.
-    inPtr = (uint8_t *) &ControlTransferBuffer;
-	if(StatusBits & type_ROM) 
-             for(i=0;i<bufferSize;i++) *inPtr++ = *ROMoutPtr++;
-	else 
-             for(i=0;i<bufferSize;i++) *inPtr++ = *outPtr++;
+    inPtr = (uint8_t *)&ControlTransferBuffer;
+	if(transferType==1) for(i=0;i<bufferSize;i++) *inPtr++ = *ROMoutPtr++;
+	else for(i=0;i<bufferSize;i++) *inPtr++ = *outPtr++;
 }
 
 // Data stage for a Control Transfer that reads data from the host
@@ -598,7 +621,7 @@ void OutDataStage(void)
     // Accumulate total number of bytes read
     wCount = wCount + bufferSize;
 
-    outPtr = (uint8_t*) &ControlTransferBuffer; // This is at *MOST* 8 bytes
+    outPtr = (uint8_t*)&ControlTransferBuffer;
 
     for (i=0;i<bufferSize;i++)
     {
@@ -611,137 +634,87 @@ void OutDataStage(void)
 // the transfer.
 void SetupStage(void)
 {
-  __asm
-    ; Note: Microchip says to turn off the UOWN bit on the IN direction as
-    ; soon as possible after detecting that a SETUP has been received.
-	BANKSEL BANKED_EP0INPUT_STAT
-	bcf	BANKED_EP0INPUT_STAT,UOWN
-	bcf	BANKED_EP0OUT_STAT,UOWN
-    ; Initialize the transfer process
-	movlw	STAGE_SETUP
-	movwf	_CtrlTransferStage
- 	bcf  	_StatusBits, status_request_handled ; Clear handled bit 
-	clrf	_wCount         ; No bytes transferred
+    // Note: Microchip says to turn off the UOWN bit on the IN direction as
+    // soon as possible after detecting that a SETUP has been received.
+    Interfaces[0].Input.Stat &= ~UOWN;
+    Interfaces[0].Output.Stat &= ~UOWN;
 
-    ; See if this is a standard (as definded in USB chapter 9) request
-	pagesel	_ProcessStandardRequest
-	call	_ProcessStandardRequest
+    // Initialize the transfer process
+    CtrlTransferStage = SETUP_STAGE;
+    RequestHandled = 0; // Default is that request hasn't been handled
+    HIDPostProcess = 0; // Assume standard request until know otherwise
+    wCount = 0;         // No bytes transferred
 
-    ; See if the HID class can do something with it.
-    	pagesel	_ProcessHIDRequest
-    	call	_ProcessHIDRequest
-	pagesel	$
+    // See if this is a standard (as definded in USB chapter 9) request
+    ProcessStandardRequest();
 
-    ; If not request handled
-	btfsc	_StatusBits,status_request_handled
-        goto	czeck_device_to_host
-        ; Service Was not handled - stall endpoint 0
-	BANKSEL BANKED_EP0OUT_STAT
-	movlw	_E0SZ
-	movwf	BANKED_EP0OUT_CNT
-	movlw	low _SetupPacket
-	movf	BANKED_EP0OUT_ADRL,W
-	movwf	high _SetupPacket
-	movwf	BANKED_EP0OUT_ADRH
-	movlw	(_BSTALL)
-	movwf	BANKED_EP0OUT_STAT
-	movwf	BANKED_EP0IN_STAT
-	bsf	BANKED_EP0OUT_STAT,UOWN
-	bsf	BANKED_EP0IN_STAT,UOWN
-	goto	SetupStage_exit
+    // See if the HID class can do something with it.
+    ProcessHIDRequest();
 
-czeck_device_to_host:
-	BANKSEL BANKED_SETUP_PACKET
-	movwf	SETUP_PACKET_bmRequestType
-	xorlw	0x80
-	btfsc   STATUS,Z
-	goto	host_to_device
+    // TBD: Add handlers for any other classes/interfaces in the device
 
-        ; Device-to-host
-	BANKSEL	_wCount
-	movf	SETUP_PACKET_wLength,W
-	subwf	SETUP_PACKET_wLength,w   ; wCount > wLength C=0
-	btfsc   STATUS,C
-        goto    $4
-	movwf	SETUP_PACKET_wLength
-	BANKSEL _wCount
-	movwf	SETUP_PACKEt_wLength
-	
-	pagesel	_InDataStage
-	call	_InDataStage
-	pagesel $
+    if (!RequestHandled)
+    {
+        // If this service wasn't handled then stall endpoint 0
+        Interfaces[0].Output.Cnt = E0SZ;
+        Interfaces[0].Output.ADDR = PTR16(&SetupPacket);
+        Interfaces[0].Output.Stat =  BSTALL;
+        Interfaces[0].Input.Stat =   BSTALL;
+        // Microchips warns to set this field last
+        Interfaces[0].Output.Stat |= UOWN;
+        Interfaces[0].Input.Stat  |= UOWN;
+    }
+    else
+    if (SetupPacket.bmRequestType & 0x80) 
+    {
+        // Device-to-host
+        if(SetupPacket.wLength < wCount)
+            wCount = SetupPacket.wLength;
+        InDataStage();
+        CtrlTransferStage = DATA_IN_STAGE;
+        // Reset the out buffer descriptor for endpoint 0
+        Interfaces[0].Output.Cnt = E0SZ;
+        Interfaces[0].Output.ADDR = PTR16(&SetupPacket);
+        Interfaces[0].Output.Stat = UOWN;
 
-	movlw	STAGE_DATA_IN
-	movwf	_CtrlTransferStage
-
-	BANKSEL BANKED_EP0OUT_STAT
-	movlw	E0SZ
-	movwf	BANKED_EP0OUT_CNT
-	movlw  	low _SetupPacket
-	movwf	BANKED_EP0OUT_ADRL
-	movlw	high _SetupPacket
-	movwf	BANKED_EP0OUT_ADRH
-	movlw	_UOWN
-	movwf	BANKED_EP0OUT_STAT
-
-	movlw 	low _ControlTransferBuffer
-	movwf	BANKED_EP0IN_ADRL
-	movlw	high _ControlTransferBuffer
-	movwf	BANKED_EP0IN_ADRH
-	movlw   (1<< DTS) | (1<<DTSEN)
-	movwf	BANKED_EP0IN_STAT
-	bsf	BANKED_EP0IN_STAT,UOWN
-host_to_device:
-
-	movlw	STAGE_DATA_OUT
-	movwf	_CtrlTransferStage
-
-        ; Clear the input buffer descriptor
-	BANKSEL	BANKED_EP0IN_STAT
-	clrf	BANKED_EP0IN_CNT
-	movlw	(1<<DTS)|(1<<DTSEN)
-	movwf	BANKED_EP0IN_STAT
-	bsf	BANKED_EP0IN_STAT,UOWN
-
-        ; Set the out buffer descriptor on endpoint 0 to receive data
-        movlw	E0SZ
-	movwf	BANKED_EP0OUT_CNT
-	movlw	low _ControlTransferBuffer
-	movwf	BANKED_EP0OUT_ADRL
-	movlw	high _ControlTransferBuffer
-	movwf	BANKED_EP0OUT_ADRH
-
+        // Set the in buffer descriptor on endpoint 0 to send data
+        Interfaces[0].Input.ADDR = PTR16(&ControlTransferBuffer);
         // Give to SIE, DATA1 packet, enable data toggle checks
-	movlw	(1<<DTS)|(1<<DTSEN)
-	movwf	BANKED_EP0OUT_STAT
-	bsf	BANKED_EP0OUT_STAT,UOWN
+        Interfaces[0].Input.Stat =  DTS | DTSEN;
+        Interfaces[0].Input.Stat |= UOWN;
+    }
+    else
+    {
+        // Host-to-device
+        CtrlTransferStage = DATA_OUT_STAGE;
 
-SetupStage_exit:
-	BANKSEL	UCON
-    	bcf	UCON,PKTDIS 
-	
-  __endasm;
+        // Clear the input buffer descriptor
+        Interfaces[0].Input.Cnt = 0;
+        Interfaces[0].Input.Stat = DTS | DTSEN;
+        Interfaces[0].Input.Stat |= UOWN;
+
+        // Set the out buffer descriptor on endpoint 0 to receive data
+        Interfaces[0].Output.Cnt = E0SZ;
+        Interfaces[0].Output.ADDR = PTR16(&ControlTransferBuffer);
+        // Give to SIE, DATA1 packet, enable data toggle checks
+        Interfaces[0].Output.Stat  = DTS | DTSEN;
+        Interfaces[0].Output.Stat |= UOWN;
+    }
+
+    // Enable SIE token and packet processing
+    UCONbits.PKTDIS = 0;
 }
 
 // Configures the buffer descriptor for endpoint 0 so that it is waiting for
 // the status stage of a control transfer.
 void WaitForSetupStage(void)
 {
-  __asm
-	movlw	STAGE_SETUP
-	movwf	_CtrlTransferStage
-	BANKSEL BANKED_EP0OUT_STAT
-	movlw	_E0SZ
-	movwf	BANKED_EP0OUT_CNT
-	movlw	low _SetupPacket
-	movwf	BANKED_EP0OUT_ADRL
-	movlw	high _SetupPacket
-	movwf	BANKED_EP0OUT_ADRH
-	movlw	(1<<DTSEN)
-	movwf	BANKED_EP0OUT_STAT
-	bsf	BANKED_EP0OUT_STAT,UOWN
-	clrf	BANKED_EP0IN_STAT
-  __endasm;
+    CtrlTransferStage = SETUP_STAGE;
+    Interfaces[0].Output.Cnt = E0SZ;
+    Interfaces[0].Output.ADDR = PTR16(&SetupPacket);
+    Interfaces[0].Output.Stat = DTSEN; // Give to SIE, enable data toggle checks
+    Interfaces[0].Output.Stat |= UOWN ;
+    Interfaces[0].Input.Stat = 0x00;         // Give control to CPU
 }
 
 // This is the starting point for processing a Control Transfer.  The code directly
@@ -750,153 +723,125 @@ void WaitForSetupStage(void)
 // Control messages that have a different destination will be discarded.
 void ProcessControlTransfer(void)
 {
+    if (USTAT == 0) // Endpoint 0: OUT
+    {
+        uint8_t PID = (Interfaces[0].Output.Stat & 0x3C) >> 2; // Pull PID from middle of BD0STAT
+        if (PID == 0x0D) {
+            // SETUP PID - a transaction is starting
+            SetupStage();
+        }
+        else if (CtrlTransferStage == DATA_OUT_STAGE)
+        {
+            OutDataStage();
+            if(Interfaces[0].Output.Stat & DTS) {
+                Interfaces[0].Output.Stat = DTSEN;
+                Interfaces[0].Output.Stat |= UOWN ;
+            } else {
+                Interfaces[0].Output.Stat = DTS | DTSEN;
+                Interfaces[0].Output.Stat |= UOWN;
+            }
+        }
+        else
+        {
+            // Prepare for the Setup stage of a control transfer
+            WaitForSetupStage();
+        }
+    }
 
-  __asm
-	BANKSEL USTAT
-	movf	USTAT,W
-	btfss	STATUS,Z
-     	goto	PCT_EP0IN
-   
- 	; Was this PID = 0x0D 
-	BANKSEL	BANKED_EP0OUT_STAT 
-	movf	BANKED_EP0OUT_STAT,W
-	andlw	0x3C  ; Mask PID from middle of BD0STAT
-	xorlw	(0x0D<<2) ; (PID = 0x0D <<2)
-	btfss 	STATUS,Z
-	goto	PCT_1
-	pagesel	_SetupStage  ; if PID==0x0D then call SetupStage
-	call	_SetupStage
-	goto	PCT_exit
+    else if(USTAT == 0x04) // Endpoint 0: IN
+    {
+        if ((UADDR == 0) && (DeviceState == ADDRESS))
+        {
+            // TBD: ensure that the new address matches the value of
+            // "deviceAddress" (which came in through a SET_ADDRESS).
+            UADDR = SetupPacket.wValue0;
+            if(UADDR == 0)
+                // If we get a reset after a SET_ADDRESS, then we need
+                // to drop back to the Default state.
+                DeviceState = DEFAULT;
+        }
 
-PCT_1:
-	; else  are we in STAGE_DATA_OUT
-	movfw	_CtrlTransferStage
-	xorlw	STAGE_DATA_OUT
-	btfss 	STATUS,Z
-	goto	PCT_2
-	pagesel	_OutDataStage
-	call	_OutDataStage
-	pagesel	$
-	movlw	(1<<DTSEN)
-	BANKSEL  BANKED_EP0OUT_STAT
-	btfss	BANKED_EP0OUT_STAT,DTS
-	xorlw	(1<<DTS)
-	movwf	BANKED_EP0OUT_STAT
-	bsf	BANKED_EP0OUT, UOWN
-	goto	PCT_exit
-PCT_2:
-	; Prepare for the Setup Stage control transfer
-	pagesel _WaitForSetupStage
-	call	_WaitForSetupStage
-	pagesel	$
-	goto	PCT_exit
+        if (CtrlTransferStage == DATA_IN_STAGE)
+        {
+            // Start (or continue) transmitting data
+            InDataStage();
 
-PCT_EP0IN:
-	xorlw	0x04 ; Endpoint 0: IN
-	btfss	STATUS,Z
-	goto	PCT_exit
+            // Turn control over to the SIE and toggle the data bit
+            if(Interfaces[0].Input.Stat & DTS) {
+                Interfaces[0].Input.Stat = DTSEN;
+                Interfaces[0].Input.Stat |= UOWN;
+            } else {
+                Interfaces[0].Input.Stat = DTS | DTSEN;
+                Interfaces[0].Input.Stat |= UOWN ;
+            }
+        }
+        else
+        {
+            // Prepare for the Setup stage of a control transfer
+            WaitForSetupStage();
+        }
+    }
+    else
+    {
+    }
+}
 
-	; if ((UADDR==0) && (DeviceState == STATE_ADDRESS))
-	movf 	UADDR,W
-	btfss	STATUS,Z
-	goto	PCT_data_in
-	movf	_DeviceState,W
-	xorlw	STATE_ADDRESS
-	btfss	STATUS,Z
-	goto	PCT_data_in
-
-	movf	SetupPacket_wValue0,W
-	movwf	UADDR
-	btfsc	STATUS,Z
-	goto	PCT_data_in
-	movlw	STATE_DEFAULT
-	movwf	_DeviceState
-
-PCT_data_in:
-	; if (CtrlTransferStage == STAGE_DATA_IN)
-	movf	_CtrlTransferStage,W
-	xorlw	STAGE_DATA_IN
-	btfss	STATUS,Z
-	goto	PCT_w4s
-	pagesel	_InDataStage
-	call	_InDataStage
-	pagesel	$
-
-	movlw	(1<<DTSEN)
-	BANKSEL	BANKED_EP0IN_STAT
-	btfss	BANKED_EP0IN_STAT,DTS
-	xorlw	(1<<DTS)
-	movwf	BANKED_EP0IN_STAT
-	bsf	BANKED_EP0IN_STAT,UOWN
-	goto	PCT_exit
-
-PCT_w4s:
-	pagesel	_WaitForSetupStage
-	call	_WaitForSetupStage
-	pagesel $
-
-PCT_exit:
-  __endasm;
+void ResetPPBuffers(void)
+{
+    do
+    {
+        UCONbits.PPBRST = 1;
+		UCONbits.PPBRST = 0;
+    } while(0);
 }
 
 void InitializeUSB(void)
 {
-   __asm
-        BANKSEL _StatusBits
-	clrf	_StatusBits	
-	BANKSEL UCFG
-	movlw 0x14
-	movwf UCFG  // Enable Pullup resistors; full speed mode; No PingPong
-	movlw STATE_DETACHED
-	movwf _DeviceState
-	bcf   _StatusBits,status_remote_wakeup
-	clrf  _CurrentConfiguration
-	clrf  UADDR // Reset USB Address
-	clrf  UEIR  // Clear all USB Error Interrupt Flags
-      ; Reset PP buffers
-	bsf   UCON, PPBRST
-	bcf   UCON, PPBRST
-
-        bcf   UCON,PKTDIS  // Enable Packet Transfers
-   __endasm;
+    UCFG = 0x14; // Enable pullup resistors; full speed mode; No PingPong
+    DeviceState = DETACHED;
+    RemoteWakeup = 0x00;
+    CurrentConfiguration = 0x00;
+    UADDR = 0; // Reset USB Address
+    UEIR = 0; // Clear all USB Error Interrupt Flags
+    ResetPPBuffers();
+    UCONbits.PKTDIS = 0;// Enable Packet Transfers
+  // ?? Value in the array seems to be wrong ??
+    Buffers[1].Buffer = (uint8_t * ) &HIDRxBuffer;
 }
 
 void EnableUSBModule(void)
 {
     // TBD: Check for voltage coming from the USB cable and use that
     // as an indication we are attached.
-   __asm
-	BANKSEL UCON
-	btfss	UCON,USBEN
-	goto	eum_next
-	clrf	UCON
-	clrf	UIE
-	bsf	UCON,USBEN
-	movlw	STATE_ATTACHED
-	movwf	_DeviceState
-eum_next:
-        btfsc  UCON,SE0
-        goto	$-1
+    if(UCONbits.USBEN == 0)
+    {
+        UCON = 0;
+        UIE = 0;
+        UCONbits.USBEN = 1;
+        DeviceState = ATTACHED;
+        
+    }
 
-	clrf	UIR
-	clrf	UIE
-	bsf	UIE,URSTIE
-	bsf	UIE,IDLEIE
-	movlw	STATE_POWERED
-	movwf	_DeviceState
-   __endasm;
+    while (UCONbits.SE0); //Single Ended Zero Is Set - Busywait for initial power-up
+
+    // If we are attached and no single-ended zero is detected, then
+    // we can move to the Powered state.
+    UIR = 0;
+    UIE = 0;
+    UIEbits.URSTIE = 1; //USB Reset Interrupt Enable bit
+    UIEbits.IDLEIE = 1; //Idle Detect Interrupt Enable bit
+    DeviceState = POWERED;
 }
 
 // Unsuspend the device
 void UnSuspend(void)
 {
-   __asm
-      BANKSEL UCON
-      bcf UCON,SUSPND
-      bcf UIE, ACTVIE
-      movlw 0xFB
-      andwf UIR,F
-   __endasm;
+
+
+
+    UCONbits.SUSPND = 0;   // Bring USB module out of power conserve
+    UIEbits.ACTVIE = 0;
+    UIR &= 0xFB;
 }
 
 // Full speed devices get a Start Of Frame (SOF) packet every 1 millisecond.
@@ -904,207 +849,131 @@ void UnSuspend(void)
 void StartOfFrame(void)
 {
     // TBD: Add a callback routine to do something
-   __asm
-      BANKSEL UIR
-      bcf UIR, SOFIF
-   __endasm;
+    UIRbits.SOFIF = 0;
 }
 
 // This routine is called in response to the code stalling an endpoint.
 void Stall(void)
 {
-   __asm
-	BANKSEL UEP0
-	btfss	UEP0, EPSTALL
-	goto  stall_exit
-	pagesel _WaitForSetupStage
-        call	_WaitForSetupStage
-	BANKSEL UEP0
-	bcf	UEP0, EPSTALL
-stall_exit:
-        bcf	UIR, STALLIF
-   __endasm;
+    if(UEP0bits.EPSTALL == 1)
+    {
+        // Prepare for the Setup stage of a control transfer
+        WaitForSetupStage();
+        UEP0bits.EPSTALL = 0;
+    }
+    UIRbits.STALLIF = 0;
 }
 
 // Suspend all processing until we detect activity on the USB bus
 void Suspend(void)
 {
-   __asm
-	BANKSEL UIE
-	bsf	UIE, ACTVIE
-	movlw	0xEF
-	andwf	UIR,f
-	bsf	UCON, SUSPND
-  __endasm;
+    UIEbits.ACTVIE = 1;                     // Enable bus activity interrupt
+    UIR &= 0xEF;
+    UCONbits.SUSPND = 1;                   // Put USB module in power conserve
 }
 
 void BusReset()
 {
-   __asm
-	BANKSEL UEIR
-	clrf	UEIR ; Clear any pending Error Interrupts
-	clrf 	UIR  ; Clear any pending USB interrupts
-	movlw	0x9F ; Enable ALL Error Interrupts
-	movwf	UEIE
-	movlw	0x7b ; Enable all *but* the ACTVIE interrupts
-	movwf	UIE
-	clrf	UADDR
-	movlw	0x16
-	movwf	UEP0 ; Set endpoint 0 as a control pipe
+    UEIR  = 0x00; // Clear any pending Error Interrupts
+    UIR   = 0x00; // Clear any pending USB interrupts
+    UEIE  = 0x9f; // Enable ALL Error Interrupt
+    UIE   = 0x7b; // Enable all *BUT* the ACTVIE interrupts
+    UADDR = 0x00;
 
-        ; Flush any pending transactions
-	bcf 	UIR, TRNIF
-	btfsc	UIR, TRNIF
-	goto 	$-2
+    // Set endpoint 0 as a control pipe
+    UEP0 = 0x16;
 
-        bcf     UCON, PKTDIS ; Enable packet processing
+    // Flush any pending transactions
+    while (UIRbits.TRNIF == 1) UIRbits.TRNIF = 0;
 
-	bcf	_StatusBits,status_remote_wakeup ; Remote wakeup is off by default
-	bcf	_StatusBits,status_self_powered  ; Self powered is off by default
-	clrf 	_CurrentConfiguration ; Clear active configuration
+    // Enable packet processing
+    UCONbits.PKTDIS = 0;
 
-	movlw	STATE_DEFAULT
-	movwf	_DeviceState
-   __endasm;
+    // Prepare for the Setup stage of a control transfer
+    WaitForSetupStage();
+
+    RemoteWakeup = 0;         // Remote wakeup is off by default
+    SelfPowered = 0;          // Self powered is off by default
+    CurrentConfiguration = 0; // Clear active configuration
+    DeviceState = DEFAULT;
 }
 
 // Main entry point for USB tasks.  Checks interrupts, then checks for transactions.
 void ProcessUSBTransactions(void)
 {
-  __asm
-	; See if device is connected yet
-	BANKSEL _DeviceState
- 	movfw	_DeviceState	
-	xorlw   STATE_DETACHED
-	btfss   STATUS,Z
-	goto	PUT_UNSUSPEND
-        
-	BANKSEL	UIR ; Clear all interrupts
-	clrf	UIR
+    // See if the device is connected yet.
+    if(DeviceState == DETACHED)
+    {
+        UIR = 0; // Clear All Interrupt Flags
+        UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
+	return;
+    }
 
-	BANKSEL PIR2 ; Clear Global USB Interrupt
-	bcf	PIR2,USBIF
-	return
+    // If the USB became active then wake up from suspend
+    if(UIRbits.ACTVIF && UIEbits.ACTVIE)
+    {
+        UnSuspend();
+	ClearUsbInterruptFlag(USB_RESUM);
+    }
 
-PUT_UNSUSPEND:
-    ; If the USB became active then wake up from suspend
-	BANKSEL UIR
-	btfss	UIR,ACTVIF
-	goto	PUT_SUSPEND
-	btfss	UIE,ACTVIE
-	goto	PUT_SUSPEND
+    // If we are supposed to be suspended, then don't try performing any
+    // processing.
+    if(UCONbits.SUSPND == 1)
+    {
+        UIR = 0; // Clear All Interrupt Flags
+        UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
+        return;
+    }
 
-	pagesel _UnSuspend	
-	call	_UnSuspend
-	pagesel	$
-	
-  	BANKSel UIR
-	bcf	UIR,USB_RESUM
+     // Process a bus reset
+    if (UIRbits.URSTIF && UIEbits.URSTIE)
+    {
+        BusReset();
+    	ClearUsbInterruptFlag(USB_URST);
+    }
 
-PUT_SUSPEND:
-    ; If we are supposed to be suspended, then cease performing any processing
-	btfss	UCON,SUSPND
-	goto	PUT_RESET
-	
-	clrf	UIR
+    if (UIRbits.IDLEIF && UIEbits.IDLEIE)
+    {
+        // No bus activity for a while - suspend the firmware
+        Suspend();
+    	ClearUsbInterruptFlag(USB_IDLE);
+    }
 
-	BANKSEL PIR2
-	bcf	PIR2,USBIF
-	return
+    if (UIRbits.SOFIF && UIEbits.SOFIE)
+    {
+        StartOfFrame();
+        ClearUsbInterruptFlag(USB_SOF);
+    }
 
-PUT_RESET:
-     ; Process a bus reset
-	btfss	UIR, URSTIF
-	goto	PUT_IDLE
-	btfss	UIE, URSTIE
-	goto	PUT_IDLE
-	pagesel _BusReset
-	call	_BusReset
-	pagesel $
+    if (UIRbits.STALLIF && UIEbits.STALLIE)
+    {
+        Stall();
+        ClearUsbInterruptFlag(USB_STALL);
+    }
 
-	BANKSEL UIR
-	bcf	UIR,USB_URST
+    if (UIRbits.UERRIF && UIEbits.UERRIE)
+    {
+        // TBD: See where the error came from.
+        // Clear errors
+        UIRbits.UERRIF = 0;
+        UEIR = 0 ; //     Clear All Usb Error Interrupt Flags
+        ClearUsbInterruptFlag(USB_UERR);
+    }
 
-PUT_IDLE:
-        ; Check for No bus activity for a while - suspend the firmware
-	btfss 	UIR,IDLEIF
-	goto	PUT_SOF
-	btfss	UIE,IDLEIE
-	goto	PUT_SOF
-	pagesel _Suspend
-	call	_Suspend
-	pagesel $
-	
-	BANKSEL UIR
-  	bcf	UIR,USB_IDLE	
+    // Unless we have been reset by the host, no need to keep processing
+    if (DeviceState < DEFAULT)
+    {
+        UIR = 0; // Clear All Interrupt Flags
+        UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
+        return;
+    }
 
-PUT_SOF:
-    	; Start of Frame (SOF)
-	btfss	UIR, SOFIF
-	goto	PUT_STALL
-	btfss	UIE, SOFIE
-	goto	PUT_STALL
-	pagesel _StartOfFrame
-	call	_StartOfFrame
-	pagesel $
-
-	BANKSEL	UIR
-	bcf	UIR,USB_SOF
-
-PUT_STALL:
-	; Check for STALL
-	btfss	UIR,STALLIF
-	goto	PUT_UERR
-	btfss	UIE,STALLIE
-	goto	PUT_UERR
-	pagesel _Stall
-	call	_Stall
-	pagesel $
-
-	BANKSEL	UIR
-	bcf	UIR,USB_STALL
-
-PUT_UERR:
-	btfss	UIR,UERRIF
-	goto	PUT_OTHER
-	btfss	UIE,UERRIE
-	goto	PUT_OTHER
-
-	bcf	UIR, UERRIF
-	clrf	UEIR
-
-	bcf	UIR,UERRIF
-
-PUT_OTHER:
-	; Unless we have been reset by the host, no need to keep processing
-	movlw	STATE_DEFAULT
-	subwf	_DeviceState,W
-
-	btfsc	STATUS,C
-	goto	PUT_PCT
-	
-	BANKSEL	UIR
-	clrf	UIR  ; Clear All Interrupt Flags
-
-	BANKSEL PIR2
-	bcf	PIR2,USBIF ; Clear Global USB Interrupt Flag
-	return
-
-PUT_PCT:
-	btfss	UIR, TRNIF
-	goto	PUT_exit
-	btfss	UIE, TRNIE
-	goto	PUT_exit
-	pagesel	_ProcessControlTransfer
-	call	_ProcessControlTransfer
-	pagesel $
-
-	BANKSEL	UIR
-	bcf	UIR,USB_TRN
-
-PUT_exit:
-	BANKSEL PIR2
-	bcf	PIR2,USBIF ; Clear Global USB Interrupt Flag
-	return
-  __endasm;
+    // A transaction has finished.  Try default processing on endpoint 0.
+    if(UIRbits.TRNIF && UIEbits.TRNIE)
+    {
+        ProcessControlTransfer();
+        ClearUsbInterruptFlag(USB_TRN);
+    }
+    UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
 }
+

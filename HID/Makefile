@@ -12,7 +12,7 @@
 OUT = main
 
 # Source files to compile
-SRC = main.c usb.c
+SRC = main.c usb.c log.c
 
 # Assembly files to assemble
 ASM = crt_bootloader_512.S
