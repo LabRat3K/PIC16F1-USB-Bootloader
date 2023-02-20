@@ -22,10 +22,7 @@
 #define InterfaceCount          0x01 // One Interface - Just Keyboard
 #define StringDescriptorCount   0x03 // Three string descriptors - See Bottom of this file
 #define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
-#define HidDescriptorSize       0x20 // Size Of HID Descriptor
-// HID
-#define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define HidInterfaceNumber      0x00 // Interface For our HID
+
 #define DeviceDescriptorSize    0x12
 
 // Strings
@@ -34,15 +31,17 @@
 #define SSER 0x00   // Serial Number String Index
 #define SCON 0x00   // Configuration String Index
 
-// Actual USB Data Buffers
-volatile uint8_t HIDRxBuffer[HidReportByteCount];
-volatile uint8_t HIDTxBuffer[HidReportByteCount];
+#define VIDL LSB(VendorId)  // Vendor Id Low Byte (LSB)
+#define VIDH MSB(VendorId)  // Vendor Id High Byte (MSB)
+#define PIDH MSB(ProductId) // Product Id High Byte (MSB)
+#define PIDL LSB(ProductId) // Product Id Low Byte (LSB)
+#define RELH MSB(ReleaseNo) // Release Number High Byte (MSB)
+#define RELL LSB(ReleaseNo) // Release Number Low Byte (LSB)
+#define INTF InterfaceCount // Total Count of Interfaces
+#define IHID HidInterfaceNumber
+#define HRBC HidReportByteCount
+#define E0SZ Endpoint0BufferSize
 
-BufferInfo Buffers[(InterfaceCount * 2)] =
-{
-    { HidReportByteCount, (uint8_t*)&HIDTxBuffer },
-    { HidReportByteCount, (uint8_t*)&HIDRxBuffer }
-};
 
 /***********************/
 /* Descriptors         */
@@ -71,15 +70,6 @@ __at (0x1E00) const uint8_t DeviceDescriptor[]=
     0x01    // Number of possible configurations
 };
 
-// ...Stuck these here to keep the number of files to minimum
-/*
-#define HRBC HidReportByteCount
-typedef struct _configStruct
-{
-    uint8_t configHeader[CONFIG_HEADER_SIZE];
-    uint8_t HIDDescriptor[HidDescriptorSize];
-} ConfigStruct;
-*/
 // Configuration descriptor
 __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
 {

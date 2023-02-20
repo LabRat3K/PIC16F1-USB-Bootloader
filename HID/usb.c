@@ -173,6 +173,16 @@ uint16_t wCount;            // Number of bytes of data
 volatile setupPacketStruct SetupPacket;
 volatile uint8_t ControlTransferBuffer[E0SZ];
 
+// Actual USB Data Buffers
+volatile uint8_t HIDRxBuffer[HidReportByteCount];
+volatile uint8_t HIDTxBuffer[HidReportByteCount];
+
+BufferInfo Buffers[(InterfaceCount * 2)] =
+{
+    { HidReportByteCount, (uint8_t*)&HIDTxBuffer },
+    { HidReportByteCount, (uint8_t*)&HIDRxBuffer }
+};
+
 
 //volatile __data __at(0x0E99) uint8_t EndpointFlags[InterfaceCount]; // Endpoint Flag Registers
 // LabRat - redefine an overlay for the UEPx registers

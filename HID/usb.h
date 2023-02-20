@@ -41,15 +41,7 @@
 #define ClearUsbInterruptFlag(x)        UIR &= ~(x)
 #define IsUsbReady ((DeviceState == 0x05) && (UCONbits.SUSPND==0))
 #define UsbInterrupt PIR2bits.USBIF
-#define VIDL LSB(VendorId)  // Vendor Id Low Byte (LSB)
-#define VIDH MSB(VendorId)  // Vendor Id High Byte (MSB)
-#define PIDH MSB(ProductId) // Product Id High Byte (MSB)
-#define PIDL LSB(ProductId) // Product Id Low Byte (LSB)
-#define RELH MSB(ReleaseNo) // Release Number High Byte (MSB)
-#define RELL LSB(ReleaseNo) // Release Number Low Byte (LSB)
-#define INTF InterfaceCount // Total Count of Interfaces
-#define IHID HidInterfaceNumber
-#define E0SZ Endpoint0BufferSize
+
 #define CONFIG_HEADER_SIZE      0x09 // Configuration descriptor header size (see UsbDescriptors.h) - Pretty much always 9 :)
 
 //#include <GenericTypeDefs.h>
