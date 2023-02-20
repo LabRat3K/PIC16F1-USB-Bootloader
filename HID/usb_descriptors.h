@@ -31,6 +31,7 @@
 #define SSER 0x00   // Serial Number String Index
 #define SCON 0x00   // Configuration String Index
 
+#define DDS  DeviceDescriptorSize
 #define VIDL LSB(VendorId)  // Vendor Id Low Byte (LSB)
 #define VIDH MSB(VendorId)  // Vendor Id High Byte (MSB)
 #define PIDH MSB(ProductId) // Product Id High Byte (MSB)
@@ -50,7 +51,7 @@
 // Device Descriptor
 __at (0x1E00) const uint8_t DeviceDescriptor[]=
 {
-    0x12,   // Size of this descriptor in bytes
+    DDS,    // Size of this descriptor in bytes
     0x01,   // DEVICE descriptor type
     0x00,   // USB Spec Release Number in BCD format LSB
     0x02,   // USB Spec Release Number in BCD format MSB
