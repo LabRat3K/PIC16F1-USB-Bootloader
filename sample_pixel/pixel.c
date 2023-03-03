@@ -136,7 +136,8 @@ int app_main (void) {
     __asm
       bcf	INTCON,GIE
     __endasm;
-    #define MAX_BRIGHTNESS 127 
+#define MAX_BRIGHTNESS 127 
+#define MIN_BRIGHTNESS 10
     for (int j=0;j<12;j++) {
         setArray(j,0,0,0);
     }
@@ -158,20 +159,31 @@ int app_main (void) {
         brt += dir;
         if (brt == MAX_BRIGHTNESS) {
            dir = -1;
-        } else if (brt == 0) {
+        } else if (brt == MIN_BRIGHTNESS) {
            dir = 1;
-	   stage = (stage+1)&0x07;
+	   stage = (stage+1)%12;
+
 	   switch (stage) {
-             case 0: setBase(48,0,0); break;
-             case 1: setBase(24,12,0); break;
-             case 2: setBase(12,24,0); break;
-             case 3: setBase(0,48,0); break;
-             case 4: setBase(0,24,12); break;
-             case 5: setBase(0,12,24); break;
-             case 6: setBase(0,0,48); break;
-             case 7: setBase(24,0,24); break;
+             // R    RG    G    GB     B   BR 
+             // 0 1  2  3  4  5  6  7  8 9 10  11
+             case 0: setBase(48,0,  0); break;
+             case 1: setBase(0 ,24, 0); break;
+             case 2: setBase(48,48, 0); break;
+             case 3: setBase(24,48, 0); break;
+             case 4: setBase(0, 48, 0); break;
+
+             case 5: setBase(0, 48,24); break;
+             case 6: setBase(0, 48,48); break;
+             case 7: setBase(0, 24,48); break;
+             case 8: setBase(0,  0,48); break;
+             case 9: setBase(24, 0,48); break;
+             case 10: setBase(48,0,48); break;
+             case 11: setBase(48,0,24); break;
+
            }
+
         }
+
         // time the animation
         /*timebase++;
         if (timebase > 200) {
@@ -183,7 +195,6 @@ int app_main (void) {
         // send out animation pattern
         // R    RG    G    GB     B   BR 
         // 0 1  2  3  4  5  6  7  8 9 10  11
-
         setArray(stage,   brt,    0,      0 );
         setArray(stage+1, brt>>1, brt>>3, 0 );
         setArray(stage+2, brt>>2, brt>>2, 0 );
@@ -221,7 +232,6 @@ int app_main (void) {
         PIR1bits.TMR1IF=0;
 
         sendArray();
-
        }
     
        return 1;
