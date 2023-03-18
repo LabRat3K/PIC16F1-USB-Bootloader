@@ -7,8 +7,8 @@
 #define BAUD		250000
 #define BAUDVAL		(FOSC/(16*BAUD))-1	// BRG16=0, BRGH=1
 
-void uart_init(void);
-void log_init(void);
+//void uart_init(void);
+//void log_init(void);
 // Linear address of the 256-byte buffer.
 //; Must be aligned to a 256-byte boundary.
 __data __at (0x2200) unsigned char LOG_BUFFER[256];
@@ -47,15 +47,13 @@ void log_service(void) {
    TXREG  = LOG_BUFFER[LOG_TAIL];
    LOG_TAIL++;
 }
-	
 
 void log_byte(char data) {
    LOG_BUFFER[LOG_HEAD] = data;
    LOG_HEAD++;
 }
-
 const unsigned char HEXMAP[16] = {'0','1','2','3','4','5','6','7',
-                            '8','9','A','B','C','D','E','F'};
+                                  '8','9','A','B','C','D','E','F'};
 
 void set_format(unsigned char FMT) {
    LOG_FMT_FLAGS = LOG_FMT_FLAGS & 0X0F | (FMT&0xF0);
@@ -89,7 +87,7 @@ void log_char(char data, unsigned char FMT) {
 void mlog_hex(char data) {
    log_hex(data,LOG_FMT_FLAGS);
    LOG_FMT_FLAGS = LOG_FMT_FLAGS-1;
-   if (LOG_FMT_FLAGS&0x0F ==0) {
+   if ((LOG_FMT_FLAGS&0x0F) ==0) {
       LOG_FMT_FLAGS = 0;
    }
-} 
+}

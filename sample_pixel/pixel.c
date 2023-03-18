@@ -59,6 +59,11 @@ APP_CONFIG(USB_BUS_POWERED, 250 MILLIAMPS);
 #define uint8_t unsigned char
 
 uint8_t DisplayArray[21*3];
+uint8_t base_effect;
+
+#define BASE_EFFECT_SOLID  0
+#define BASE_EFFECT_LARSON 1
+#define BASE_EFFECT_NONE   2
 
 // macro to send the bit 'b' (can be either 0 or 1)
 void inline send(char b)  {
@@ -128,7 +133,7 @@ void setBase(signed char bid, uint8_t r, uint8_t g, uint8_t b) {
 }
 
 static void clearPixels() {
-  for (i=0;i<12*3;i++) {
+  for (int i=0;i<12*3;i++) {
      DisplayArray[i] =0;
   }
 }
@@ -221,17 +226,22 @@ static void checkRow0(void) {
    if (KEYS[0]&0x01) {
       setPixel(0,0x80,0,0);
       larsen_dir = 1;
+      base_effect = BASE_EFFECT_SOLID;
     }
    else 
       setPixel(0,0,0,0);
 
-   if (KEYS[0]&0x02) 
+   if (KEYS[0]&0x02)  {
       setPixel(1,0,0x80,0);
+      base_effect = BASE_EFFECT_LARSON;
+    }
    else
       setPixel(1,0,0,0);
 
-   if (KEYS[0]&0x04) 
+   if (KEYS[0]&0x04)  {
       setPixel(2,0,0,0x80);
+      base_effect = BASE_EFFECT_NONE;
+    }
    else
       setPixel(2,0,0,0);
 
@@ -288,9 +298,6 @@ static void checkRow2(void) {
 #define MAX_BRIGHTNESS 63 
 #define MIN_BRIGHTNESS 10
 
-#define BASE_EFFECT_SOLID  0
-#define BASE_EFFECT_LARSON 1
-#define BASE_EFFECT_NONE   2
 
 
 static void scanKeys() {
@@ -313,9 +320,10 @@ static void scanKeys() {
    ROW3 = 0;
 }
 
+
 // main function
 int app_main (void) {
-    uint8_t base_effect = BASE_EFFECT_LARSON; 
+    base_effect = BASE_EFFECT_LARSON; 
     // declare variables used for animation
     unsigned char brt = 1; 
     signed char dir = 1;
@@ -333,6 +341,7 @@ int app_main (void) {
               floodBase(0x40,0x00,0x0);
               break; 
           default: // BASE_EFFECT_NONE
+              floodBase(0x0,0x0,0x0);
               break;
         }
 

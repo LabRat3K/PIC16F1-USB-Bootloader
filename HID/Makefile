@@ -24,9 +24,9 @@ CC_DEVICE = 16f1455
 
 
 ########## Build settings ##########
-
+LIBS = pic16f1455.lib  libsdcce.lib
 CFLAGS = --use-non-free --stack-size 16 --opt-code-speed --std-sdcc99 -DNO_BIT_DEFINES
-LDFLAGS = -Wl-s16f145x_bootloader_512.lkr
+LDFLAGS = -I /usr/local/share/sdcc/lib/pic14 -I /usr/local/share/sdcc/non-free/lib/pic14/  -s16f145x_bootloader_512.lkr
 PROG = ../usb16f1prog	# change this once you've installed the script
 PORT = -p /dev/ttyACM0
 CC = sdcc
@@ -34,7 +34,6 @@ AS = gpasm
 LD = gplink
 DASM = gpdasm
 CC_FAMILY = pic14
-
 
 ########## Make rules ##########
 
@@ -50,7 +49,7 @@ HEX = $(OUT).hex
 
 # Link
 $(HEX): $(OBJ)
-	$(CC) $(LDFLAGS) -o $(HEX) $(CFLAGS) -m$(CC_FAMILY) -p$(CC_DEVICE) $(OBJ)
+	$(LD) $(LDFLAGS) -o $(HEX) $(OBJ) $(LIBS)
 
 # Disassemble
 dis: $(HEX)
