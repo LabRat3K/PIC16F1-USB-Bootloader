@@ -1158,7 +1158,7 @@ sd002
 	dt 	IPROD_SIZE ; sizeof( SD002)
 	dt	0x03
 	dt 	'Y',0,'A',0,'M',0,'A',0,'*',0,' ',0,'(',0,'C',0,')',0,' ',0
-	dt	'2',0,'0',0,'2',0,'2',0
+	dt	'2',0,'0',0,'2',0,'6',0
 
 
 ; Raise an error if the descriptors aren't properly aligned. (This means you
