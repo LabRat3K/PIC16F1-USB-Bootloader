@@ -808,7 +808,7 @@ void InitializeUSB(void)
 
 // LabRat - this is weird .. why is it wrong? - investigate/debug
   // ?? Value in the array seems to be wrong ??
-    Buffers[1].Buffer = (uint8_t * ) &HIDRxBuffer;
+  //  Buffers[1].Buffer = (uint8_t * ) &HIDRxBuffer;
 }
 
 void EnableUSBModule(void)

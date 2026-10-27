@@ -14,15 +14,35 @@
 
 #include "usb_shared.h"
 
-// Actual USB Data Buffers
-volatile uint8_t HIDRxBuffer[HidReportByteCount];
-volatile uint8_t HIDTxBuffer[HidReportByteCount];
+// LabRat: re-check these .. 
+#define EP0_OUT  0
+#define EP0_IN   1
+#define EP1_IN   2  // HID 1
+#define EP2_IN   4  // HID 2
+#define EP3_IN   6  // CDC Notification
+#define EP4_OUT  8  // CDC Bulk Out
+#define EP4_IN   9  // CDC Bulk In
+
+// Allocate endpoint payload buffers elsewhere inside the USB RAM (0x2040 - 0x21FF)
+__at (0x2040) volatile uint8_t ep0_out_buf[64];
+__at (0x2080) volatile uint8_t ep0_in_buf[64];
+__at (0x20C0) volatile uint8_t hid1_out_buf[HidReportByteCount];
+__at (0x20C8) volatile uint8_t hid1_in_buf[HidReportByteCount];
+__at (0x20D0) volatile uint8_t hid2_out_buf[HidReportByteCount];
+__at (0x20D8) volatile uint8_t hid2_in_buf[HidReportByteCount];
+__at (0x2100) volatile uint8_t cdc_out_buf[CdcReportByteCount];
+__at (0x2140) volatile uint8_t cdc_in_buf[CdcReportByteCount];
 
 BufferInfo Buffers[(InterfaceCount * 2)] =
 {
-    { HidReportByteCount, (uint8_t*)&HIDTxBuffer },
-    { HidReportByteCount, (uint8_t*)&HIDRxBuffer }
+    { HidReportByteCount, (uint8_t*)&hid1_in_buf },
+    { HidReportByteCount, (uint8_t*)&hid1_out_buf},
+    { HidReportByteCount, (uint8_t*)&hid1_in_buf },
+    { HidReportByteCount, (uint8_t*)&hid1_out_buf},
+    { CdcReportByteCount, (uint8_t*)&cdc_in_buf },
+    { CdcReportByteCount, (uint8_t*)&cdc_out_buf}
 };
+
 
 /***********************/
 /* Descriptors         */
@@ -67,7 +87,7 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
         // Configuration descriptor
     0x09,   // Size of this descriptor in bytes
     0x02,   // CONFIGURATION descriptor type
-    0x29,   // Total length of data for this cfg LSB
+    0x72,   // Total length of data for this cfg LSB
     0x00,   // Total length of data for this cfg MSB
     INTF,   // Number of interfaces in this cfg
     0x01,   // Index value of this configuration
@@ -76,10 +96,10 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x32,   // Max power consumption (50 mA)
     },
     {
-        // Keyboard HID Interface descriptor
+        // HID0:: Keyboard HID Interface descriptor
     0x09,   // Size of this descriptor in bytes
     0x04,   // INTERFACE descriptor type
-    IHID,   // Interface Number
+    IHID,   // Interface Number (0x00)
     0x00,   // Alternate Setting Number
     0x02,   // Number of endpoints in this interface
     0x03,   // Class code (HID)
@@ -115,7 +135,32 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x03,   // Attributes (Interrupt)
     HRBC,   // Max Packet Size LSB
     0x00,   // Max Packet Size MSB
-    0x01    // Interval (1 millisecond)
+    0x01,   // Interval (1 millisecond)
+
+    // ==========================================
+    // INTERFACE 1: HID 2 
+    // ==========================================
+    0x09, 0x04, 0x01, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, // HID Class
+    0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x34, 0x00, // HID Descriptor
+    0x07, 0x05, 0x82, 0x03, 0x08, 0x00, 0x01,             // Endpoint 2 IN
+
+    // ==========================================
+    // INTERFACE ASSOCIATION DESCRIPTOR (IAD) FOR CDC
+    // ==========================================
+    0x08, 0x0B, 0x02, 0x02, 0x02, 0x02, 0x01, 0x00,
+
+    // INTERFACE 2: CDC Communication
+    0x09, 0x04, 0x02, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00,
+    0x05, 0x24, 0x00, 0x10, 0x01,                         // Header Functional
+    0x05, 0x24, 0x01, 0x00, 0x03,                         // Call Management
+    0x04, 0x24, 0x02, 0x02,                               // ACM Functional
+    0x05, 0x24, 0x06, 0x02, 0x03,                         // Union Functional
+    0x07, 0x05, 0x84, 0x03, 0x0A, 0x00, 0x40,             // Notification EP
+
+    // INTERFACE 3: CDC Data
+    0x09, 0x04, 0x03, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00,
+    0x07, 0x05, 0x03, 0x02, 0x40, 0x00, 0x00,             // OUT Endpoint 3
+    0x07, 0x05, 0x83, 0x02, 0x40, 0x00, 0x00              // IN Endpoint 3
     }
 };
 

@@ -210,7 +210,6 @@ void PrepareTxBuffer(uint8_t InterfaceNo)
 #endif
 }
 
-uint8_t gCapsLock = 0;
 
 void ProcessIncommingData(uint8_t InterfaceNo)
 {
@@ -223,11 +222,6 @@ void ProcessIncommingData(uint8_t InterfaceNo)
 // DEBUGGING ONLY : use the SCOLL/CAPSLOCK leds 
     P1LED = (HIDRxBuffer[0] & 0x01)==0;
     P2LED = (HIDRxBuffer[0] & 0x02)==0;
-
-    if (gCapsLock != ((HIDRxBuffer[0] & 0x02)==0)) {
-       gCapsLock = ((HIDRxBuffer[0] & 0x02)==0);
-       log_char('!',FMT_EOL);
-    }
 }
 
 static void CheckUsb(void)
