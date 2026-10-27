@@ -29,7 +29,7 @@
  */
 
 #include "usb.h"
-#include "usb_descriptors.h"
+#include "usb_descriptors.inc"
 #include "pic16f1459.h"
 #include "log.h"
 
@@ -162,7 +162,6 @@ uint8_t RequestHandled;    // Set to 1 if request was understood and processed.
 // HID Class variables
 uint8_t HidIdleRate;
 uint8_t HidProtocol; // [0] Boot Protocol [1] Report Protocol
-uint8_t HidRxLen;    // # of bytes put into buffer
 
 const uint8_t *ROMoutPtr;  // Data to send to the host
 uint8_t *outPtr;           // Data to send to the host
@@ -193,9 +192,9 @@ volatile __data __at (0x20) Interface Interfaces[InterfaceCount + 1];
 uint8_t IsUsbDataAvailable(uint8_t InterfaceNo)
 {
     if(InterfaceNo >= InterfaceCount) return 0;
-    if(!(Interfaces[InterfaceNo + 1].Output.Stat & UOWN))
+    if(!(Interfaces[InterfaceNo].Output.Stat & UOWN))
     {
-        return Interfaces[InterfaceNo + 1].Output.Cnt;
+        return Interfaces[InterfaceNo].Output.Cnt;
     }
     return 0;
 }
@@ -206,36 +205,46 @@ void ReArmInterface(uint8_t InterfaceNo)
     //Indicate that we have processed it and get the endpoint
     //ready to receive next packet.
 
-    if(!(Interfaces[InterfaceNo + 1].Output.Stat & UOWN))
+    if(!(Interfaces[InterfaceNo].Output.Stat & UOWN))
     {
-        Interfaces[InterfaceNo + 1].Output.Cnt =  Buffers[(InterfaceNo * 2) + 1].Size;
+        Interfaces[InterfaceNo].Output.Cnt =  Buffers[(InterfaceNo * 2) + 1].Size;
 
-  //      HIDRxBuffer
-        if(Interfaces[InterfaceNo + 1].Output.Stat & DTS) {
-            Interfaces[InterfaceNo + 1].Output.Stat = DTSEN;
-            Interfaces[InterfaceNo + 1].Output.Stat |= UOWN;
+        if(Interfaces[InterfaceNo].Output.Stat & DTS) {
+            Interfaces[InterfaceNo].Output.Stat = DTSEN;
+            Interfaces[InterfaceNo].Output.Stat |= UOWN;
         } else{
-            Interfaces[InterfaceNo + 1].Output.Stat = DTS | DTSEN;
-            Interfaces[InterfaceNo + 1].Output.Stat |= UOWN ;
+            Interfaces[InterfaceNo].Output.Stat = DTS | DTSEN;
+            Interfaces[InterfaceNo].Output.Stat |= UOWN ;
         }
     }
 }
 
-void HIDSend(uint8_t InterfaceNo)
+uint8_t* GetHIDTxBuffer(uint8_t InterfaceNo) {
+   return Buffers[InterfaceNo*2].Buffer;
+}
+
+uint8_t* GetHIDRxBuffer(uint8_t InterfaceNo) {
+   return Buffers[InterfaceNo*2+1].Buffer;
+}
+
+// Return logic appears reversed, but it isn't. We can assign this to the 
+// "has changed" byte of the caller, with no need for a comparioson/test. 
+uint8_t HIDSend(uint8_t InterfaceNo)
 {
     // If the CPU still owns the SIE, then don't try to send anything.
-    if (Interfaces[InterfaceNo + 1].Input.Stat & UOWN) return;
+    if (Interfaces[InterfaceNo].Input.Stat & UOWN) return 1;
+
     // Toggle the data bit and give control to the SIE
+    Interfaces[InterfaceNo].Input.Cnt =  Buffers[InterfaceNo * 2].Size;
 
-    Interfaces[InterfaceNo + 1].Input.Cnt =  Buffers[InterfaceNo * 2].Size;
-
-    if(Interfaces[InterfaceNo + 1].Input.Stat & DTS) {
-        Interfaces[InterfaceNo + 1].Input.Stat = DTSEN;
-        Interfaces[InterfaceNo + 1].Input.Stat |= UOWN;
+    if (Interfaces[InterfaceNo].Input.Stat & DTS) {
+        Interfaces[InterfaceNo].Input.Stat = DTSEN;
+        Interfaces[InterfaceNo].Input.Stat |= UOWN;
     } else {
-        Interfaces[InterfaceNo + 1].Input.Stat = DTS | DTSEN;
-        Interfaces[InterfaceNo + 1].Input.Stat |= UOWN;
+        Interfaces[InterfaceNo].Input.Stat = DTS | DTSEN;
+        Interfaces[InterfaceNo].Input.Stat |= UOWN;
     }
+    return 0;
 }
 
 // After configuration is complete, this routine is called to initialize
@@ -243,8 +252,6 @@ void HIDSend(uint8_t InterfaceNo)
 void HIDInitEndpoints(void)
 {
     uint8_t i = 0;
-
-    HidRxLen =0;
 
     for (i = 0 ; i < InterfaceCount; i++)
     {
@@ -259,7 +266,6 @@ void HIDInitEndpoints(void)
 
         Interfaces[i + 1].Input.ADDR = PTR16(Buffers[(i * 2)].Buffer);
         Interfaces[i + 1].Input.Stat = DTS;
-
     }
 }
 
@@ -419,7 +425,7 @@ static void GetStatus(void)
         RequestHandled = 1;
         // Endpoint descriptors are 8 bytes long, with each in and out taking 4 bytes
         // within the endpoint. (See PIC datasheet.)
-        inPtr = (uint8_t *)&Interfaces[0].Output + (endpointNum * 8);
+        inPtr = (uint8_t *)&Interfaces[EP0Id].Output + (endpointNum * 8);
         if (endpointDir)
             inPtr += 4;
         if(*inPtr & BSTALL)
@@ -464,7 +470,7 @@ static void SetFeature(void)
             RequestHandled = 1;
             // Endpoint descriptors are 8 bytes long, with each in and out taking 4 bytes
             // within the endpoint. (See PIC datasheet.)
-            inPtr = (uint8_t *)&Interfaces[0].Output + (endpointNum * 8);
+            inPtr = (uint8_t *)&Interfaces[EP0Id].Output + (endpointNum * 8);
             if (endpointDir)
                 inPtr += 4;
 
@@ -590,10 +596,10 @@ void InDataStage(void)
         bufferSize = E0SZ;
 
     // Load the high two bits of the byte count into BC8:BC9
-    Interfaces[0].Input.Stat &= ~(BC8 | BC9); // Clear BC8 and BC9
-    Interfaces[0].Input.Stat |= (uint8_t)((bufferSize & 0x0300) >> 8);
-    Interfaces[0].Input.Cnt = (uint8_t)(bufferSize & 0xFF);
-    Interfaces[0].Input.ADDR = PTR16(&ControlTransferBuffer);
+    Interfaces[EP0Id].Input.Stat &= ~(BC8 | BC9); // Clear BC8 and BC9
+    Interfaces[EP0Id].Input.Stat |= (uint8_t)((bufferSize & 0x0300) >> 8);
+    Interfaces[EP0Id].Input.Cnt = (uint8_t)(bufferSize & 0xFF);
+    Interfaces[EP0Id].Input.ADDR = PTR16(&ControlTransferBuffer);
 
     // Update the number of bytes that still need to be sent.  Getting
     // all the data back to the host can take multiple transactions, so
@@ -611,7 +617,7 @@ void OutDataStage(void)
 {
     uint16_t i, bufferSize;
 
-    bufferSize = ((0x03 & Interfaces[0].Output.Stat) << 8) | Interfaces[0].Output.Cnt;
+    bufferSize = ((0x03 & Interfaces[EP0Id].Output.Stat) << 8) | Interfaces[EP0Id].Output.Cnt;
 
     // Accumulate total number of bytes read
     wCount = wCount + bufferSize;
@@ -631,8 +637,8 @@ void SetupStage(void)
 {
     // Note: Microchip says to turn off the UOWN bit on the IN direction as
     // soon as possible after detecting that a SETUP has been received.
-    Interfaces[0].Input.Stat &= ~UOWN;
-    Interfaces[0].Output.Stat &= ~UOWN;
+    Interfaces[EP0Id].Input.Stat &= ~UOWN;
+    Interfaces[EP0Id].Output.Stat &= ~UOWN;
 
     // Initialize the transfer process
     CtrlTransferStage = SETUP_STAGE;
@@ -651,16 +657,15 @@ void SetupStage(void)
     if (!RequestHandled)
     {
         // If this service wasn't handled then stall endpoint 0
-        Interfaces[0].Output.Cnt = E0SZ;
-        Interfaces[0].Output.ADDR = PTR16(&SetupPacket);
-        Interfaces[0].Output.Stat =  BSTALL;
-        Interfaces[0].Input.Stat =   BSTALL;
+        Interfaces[EP0Id].Output.Cnt = E0SZ;
+        Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
+        Interfaces[EP0Id].Output.Stat =  BSTALL;
+        Interfaces[EP0Id].Input.Stat =   BSTALL;
         // Microchips warns to set this field last
-        Interfaces[0].Output.Stat |= UOWN;
-        Interfaces[0].Input.Stat  |= UOWN;
+        Interfaces[EP0Id].Output.Stat |= UOWN;
+        Interfaces[EP0Id].Input.Stat  |= UOWN;
     }
-    else
-    if (SetupPacket.bmRequestType & 0x80) 
+    else if (SetupPacket.bmRequestType & 0x80) 
     {
         // Device-to-host
         if(SetupPacket.wLength < wCount)
@@ -668,15 +673,15 @@ void SetupStage(void)
         InDataStage();
         CtrlTransferStage = DATA_IN_STAGE;
         // Reset the out buffer descriptor for endpoint 0
-        Interfaces[0].Output.Cnt = E0SZ;
-        Interfaces[0].Output.ADDR = PTR16(&SetupPacket);
-        Interfaces[0].Output.Stat = UOWN;
+        Interfaces[EP0Id].Output.Cnt = E0SZ;
+        Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
+        Interfaces[EP0Id].Output.Stat = UOWN;
 
         // Set the in buffer descriptor on endpoint 0 to send data
-        Interfaces[0].Input.ADDR = PTR16(&ControlTransferBuffer);
+        Interfaces[EP0Id].Input.ADDR = PTR16(&ControlTransferBuffer);
         // Give to SIE, DATA1 packet, enable data toggle checks
-        Interfaces[0].Input.Stat =  DTS | DTSEN;
-        Interfaces[0].Input.Stat |= UOWN;
+        Interfaces[EP0Id].Input.Stat =  DTS | DTSEN;
+        Interfaces[EP0Id].Input.Stat |= UOWN;
     }
     else
     {
@@ -684,16 +689,16 @@ void SetupStage(void)
         CtrlTransferStage = DATA_OUT_STAGE;
 
         // Clear the input buffer descriptor
-        Interfaces[0].Input.Cnt = 0;
-        Interfaces[0].Input.Stat = DTS | DTSEN;
-        Interfaces[0].Input.Stat |= UOWN;
+        Interfaces[EP0Id].Input.Cnt = 0;
+        Interfaces[EP0Id].Input.Stat = DTS | DTSEN;
+        Interfaces[EP0Id].Input.Stat |= UOWN;
 
         // Set the out buffer descriptor on endpoint 0 to receive data
-        Interfaces[0].Output.Cnt = E0SZ;
-        Interfaces[0].Output.ADDR = PTR16(&ControlTransferBuffer);
+        Interfaces[EP0Id].Output.Cnt = E0SZ;
+        Interfaces[EP0Id].Output.ADDR = PTR16(&ControlTransferBuffer);
         // Give to SIE, DATA1 packet, enable data toggle checks
-        Interfaces[0].Output.Stat  = DTS | DTSEN;
-        Interfaces[0].Output.Stat |= UOWN;
+        Interfaces[EP0Id].Output.Stat  = DTS | DTSEN;
+        Interfaces[EP0Id].Output.Stat |= UOWN;
     }
 
     // Enable SIE token and packet processing
@@ -705,11 +710,11 @@ void SetupStage(void)
 void WaitForSetupStage(void)
 {
     CtrlTransferStage = SETUP_STAGE;
-    Interfaces[0].Output.Cnt = E0SZ;
-    Interfaces[0].Output.ADDR = PTR16(&SetupPacket);
-    Interfaces[0].Output.Stat = DTSEN; // Give to SIE, enable data toggle checks
-    Interfaces[0].Output.Stat |= UOWN ;
-    Interfaces[0].Input.Stat = 0x00;         // Give control to CPU
+    Interfaces[EP0Id].Output.Cnt = E0SZ;
+    Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
+    Interfaces[EP0Id].Output.Stat = DTSEN; // Give to SIE, enable data toggle checks
+    Interfaces[EP0Id].Output.Stat |= UOWN ;
+    Interfaces[EP0Id].Input.Stat = 0x00;         // Give control to CPU
 }
 
 // This is the starting point for processing a Control Transfer.  The code directly
@@ -720,7 +725,7 @@ void ProcessControlTransfer(void)
 {
     if (USTAT == 0) // Endpoint 0: OUT
     {
-        uint8_t PID = (Interfaces[0].Output.Stat & 0x3C) >> 2; // Pull PID from middle of BD0STAT
+        uint8_t PID = (Interfaces[EP0Id].Output.Stat & 0x3C) >> 2; // Pull PID from middle of BD0STAT
         if (PID == 0x0D) {
             // SETUP PID - a transaction is starting
             SetupStage();
@@ -728,12 +733,12 @@ void ProcessControlTransfer(void)
         else if (CtrlTransferStage == DATA_OUT_STAGE)
         {
             OutDataStage();
-            if(Interfaces[0].Output.Stat & DTS) {
-                Interfaces[0].Output.Stat = DTSEN;
-                Interfaces[0].Output.Stat |= UOWN ;
+            if(Interfaces[EP0Id].Output.Stat & DTS) {
+                Interfaces[EP0Id].Output.Stat = DTSEN;
+                Interfaces[EP0Id].Output.Stat |= UOWN ;
             } else {
-                Interfaces[0].Output.Stat = DTS | DTSEN;
-                Interfaces[0].Output.Stat |= UOWN;
+                Interfaces[EP0Id].Output.Stat = DTS | DTSEN;
+                Interfaces[EP0Id].Output.Stat |= UOWN;
             }
         }
         else
@@ -762,12 +767,12 @@ void ProcessControlTransfer(void)
             InDataStage();
 
             // Turn control over to the SIE and toggle the data bit
-            if(Interfaces[0].Input.Stat & DTS) {
-                Interfaces[0].Input.Stat = DTSEN;
-                Interfaces[0].Input.Stat |= UOWN;
+            if(Interfaces[EP0Id].Input.Stat & DTS) {
+                Interfaces[EP0Id].Input.Stat = DTSEN;
+                Interfaces[EP0Id].Input.Stat |= UOWN;
             } else {
-                Interfaces[0].Input.Stat = DTS | DTSEN;
-                Interfaces[0].Input.Stat |= UOWN ;
+                Interfaces[EP0Id].Input.Stat = DTS | DTSEN;
+                Interfaces[EP0Id].Input.Stat |= UOWN ;
             }
         }
         else
@@ -800,6 +805,8 @@ void InitializeUSB(void)
     UEIR = 0; // Clear all USB Error Interrupt Flags
     ResetPPBuffers();
     UCONbits.PKTDIS = 0;// Enable Packet Transfers
+
+// LabRat - this is weird .. why is it wrong? - investigate/debug
   // ?? Value in the array seems to be wrong ??
     Buffers[1].Buffer = (uint8_t * ) &HIDRxBuffer;
 }

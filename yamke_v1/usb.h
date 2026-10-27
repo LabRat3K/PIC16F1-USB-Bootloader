@@ -52,7 +52,6 @@
 #define E0SZ Endpoint0BufferSize
 #define CONFIG_HEADER_SIZE      0x09 // Configuration descriptor header size (see UsbDescriptors.h) - Pretty much always 9 :)
 
-//#include <GenericTypeDefs.h>
 
 // Structures
 typedef struct _BufferInfo
@@ -67,9 +66,10 @@ extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, 
 // USB Functions
 void InitializeUSB(void);
 void EnableUSBModule(void);
-void HIDSend(uint8_t InterfaceNo);
+uint8_t HIDSend(uint8_t InterfaceNo);
 void ProcessUSBTransactions(void);
 void ReArmInterface(uint8_t InterfaceNo);
 uint8_t IsUsbDataAvailable(uint8_t InterfaceNo);
-
+uint8_t* GetHIDTxBuffer(uint8_t InterfaceNo);
+uint8_t* GetHIDRxBuffer(uint8_t InterfaceNo);
 #endif	/* USB_H */

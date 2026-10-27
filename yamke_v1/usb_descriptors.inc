@@ -1,5 +1,5 @@
 /*
- * File:   UsbDescriptors.h
+ * File:   UsbDescriptors.inc
  * Author: Szymon Roslowski
  *
  * Created on 13 October 2014, 18:44
@@ -9,31 +9,10 @@
  * it is and what interfaces it supports.
  */
 
-#ifndef USBDESCRIPTORS_H
-#define	USBDESCRIPTORS_H
+#ifndef USBDESCRIPTORS_INC
+#define	USBDESCRIPTORS_INC
 
-
-// Vendor and Product Information
-/* Moved to USB_SHARED
-#define VendorId    0x04D8
-#define ProductId   0xE3D6
-#define ReleaseNo   0x0001
-*/
-// Definitions
-#define InterfaceCount          0x01 // One Interface - Just Keyboard
-#define StringDescriptorCount   0x03 // Three string descriptors - See Bottom of this file
-#define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
-#define HidDescriptorSize       0x20 // Size Of HID Descriptor
-// HID
-#define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define HidInterfaceNumber      0x00 // Interface For our HID
-#define DeviceDescriptorSize    0x12
-
-// Strings
-#define SMAN 0x01   // Manufacturer Name String Index
-#define SPRD 0x02   // Product Name String Index
-#define SSER 0x00   // Serial Number String Index
-#define SCON 0x00   // Configuration String Index
+#include "usb_shared.h"
 
 // Actual USB Data Buffers
 volatile uint8_t HIDRxBuffer[HidReportByteCount];
@@ -193,4 +172,4 @@ const uint8_t *const StringDescriptorPointers[StringDescriptorCount]=
     (const uint8_t *const)&StringDescriptor2
 };
 
-#endif	/* USBDESCRIPTORS_H */
+#endif	/* USBDESCRIPTORS_INC */

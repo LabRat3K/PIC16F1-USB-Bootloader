@@ -41,15 +41,10 @@ LEDMAP: C0,C1
 #include "log.h"
 
 #define PROG_BUTTON         PORTAbits.RA3
-#define LED_PWR             LATAbits.LATA4
-#ifndef LOGGING
-   #define LED_CAPS         LATCbits.LATC5
-#endif
+#define P1LED               LATCbits.LATC0
+#define P2LED               LATCbits.LATC1
 
 #define SW_MASK  (0x08)
-
-#define LED1 LATCbits.LATC0
-#define LED2 LATCbits.LATC1
 #define OUT_MASK_C (0x03)
 /*
 #define J1_UP     PORTAbits.RA5
@@ -190,9 +185,10 @@ uint8_t Player2_Idx = 2;
 
 // ----------------------------------
 
-void PrepareTxBuffer(void)
+void PrepareTxBuffer(uint8_t InterfaceNo)
 {
     uint8_t i=2;
+    uint8_t* HIDTxBuffer = GetHIDTxBuffer(InterfaceNo);
 
     HIDTxBuffer[0] = 0x00;                          // Modifier Key Bits (we are not using any)
     HIDTxBuffer[1] = 0x00;                          // Second Byte always 0 (Padding Byte)
@@ -216,23 +212,22 @@ void PrepareTxBuffer(void)
 
 uint8_t gCapsLock = 0;
 
-void ProcessIncommingData(void)
+void ProcessIncommingData(uint8_t InterfaceNo)
 {
     log_byte(':');
-    log_char(HIDRxBuffer[0],FMT_HEX|FMT_SPACE);
+    uint8_t* HIDRxBuffer = GetHIDRxBuffer(InterfaceNo);
 
     // Windows Will send only a single Byte
     // with statuses of leds
     // first bit for num lock, second for caps etc..
-      LED_PWR = (HIDRxBuffer[0] & 0x01)==0;
-#ifndef LOGGING
-      LED_CAPS= (HIDRxBuffer[0] & 0x02)==0;
-#endif
+// DEBUGGING ONLY : use the SCOLL/CAPSLOCK leds 
+    P1LED = (HIDRxBuffer[0] & 0x01)==0;
+    P2LED = (HIDRxBuffer[0] & 0x02)==0;
 
-      if (gCapsLock != ((HIDRxBuffer[0] & 0x02)==0)) {
-         gCapsLock = ((HIDRxBuffer[0] & 0x02)==0);
-         log_char('!',FMT_EOL);
-      }
+    if (gCapsLock != ((HIDRxBuffer[0] & 0x02)==0)) {
+       gCapsLock = ((HIDRxBuffer[0] & 0x02)==0);
+       log_char('!',FMT_EOL);
+    }
 }
 
 static void CheckUsb(void)
@@ -240,7 +235,7 @@ static void CheckUsb(void)
     if(IsUsbDataAvailable(HidInterfaceNumber) > 0 )
     {
         log_byte('Z');
-        ProcessIncommingData();
+        ProcessIncommingData(HidInterfaceNumber);
         ReArmInterface(HidInterfaceNumber);
     }
 }
@@ -253,15 +248,13 @@ void ProcessIO(void)
 
     // Check Status Of the Keyboard 
     if (P1changed) {
-        PrepareTxBuffer();
-        HIDSend(HidInterfaceNumber); // Need to update this!!
-        P1changed = 0;
+        PrepareTxBuffer(P1HidNo);
+        P1changed = HIDSend(P1HidNo);
     }
 
     if (P2changed) {
-        PrepareTxBuffer();
-        HIDSend(HidInterfaceNumber); // Need to update this!!
-        P2changed = 0;
+        PrepareTxBuffer(P2HidNo);
+        P2changed = HIDSend(P2HidNo);
     }
 
 }
@@ -301,7 +294,7 @@ int app_main(void)
            __asm
            reset
            __endasm;
-         }
+      }
    } // while(1)
 }
 

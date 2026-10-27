@@ -23,7 +23,12 @@ typedef unsigned short uint16_t;
 #define HidDescriptorSize       0x20 // Size Of HID Descriptor
 // HID
 #define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define HidInterfaceNumber      0x00 // Interface For our HID
+
+#define P1HidNo 0x01            // Player1 HID Endpoint Index
+#define P2HidNo 0x03            // Player2 HID Endpoint Index
+
+#define HidInterfaceNumber      P1HidNo // Interface For our HID
+#define EP0Id   0x00
 
 // Strings
 #define SMAN 0x01   // Manufacturer Name String Index
@@ -35,9 +40,10 @@ typedef unsigned short uint16_t;
 #define DeviceDescriptorSize    0x12
 
 // Actual USB Data Buffers
-extern volatile uint8_t HIDRxBuffer[HidReportByteCount];
-extern volatile uint8_t HIDTxBuffer[HidReportByteCount];
+//extern volatile uint8_t HIDRxBuffer[HidReportByteCount];
+//extern volatile uint8_t HIDTxBuffer[HidReportByteCount];
 
+uint8_t* getHIDTxBuffer(uint8_t InterfaceNo);
 
 /***********************/
 /* Descriptors         */
