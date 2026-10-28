@@ -239,6 +239,8 @@ void ProcessSerial(uint8_t InterfaceNo,uint8_t count)
     uint8_t* CdcRxBuffer = GetEpRxBuffer(InterfaceNo);
     uint8_t* CdcTxBuffer = GetEpTxBuffer(InterfaceNo);
 
+   // TODO: Update this to scan for LED update messages (0 though 4 based on player profile)
+
    // For now do nothing... but will want to reivew the BDT[EP].CNT and then cycle through bytes
    for (i=0;i<count;i++){
      *CdcTxBuffer = *CdcRxBuffer;
