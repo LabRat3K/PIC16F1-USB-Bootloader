@@ -17,16 +17,17 @@ typedef unsigned short uint16_t;
 #define ReleaseNo   0x0001
 
 // Definitions
-#define InterfaceCount          0x01 // One Interface - Just Keyboard
+#define InterfaceCount          0x04 // Four - two HID Keyboard, CDC Commns, and CDC Data
 #define StringDescriptorCount   0x03 // Three string descriptors - See Bottom of this file
 #define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
-#define HidDescriptorSize       0x20 // Size Of HID Descriptor
+#define HidDescriptorSize       0x80 // Size Of HID Descriptor
 // HID
 #define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
 #define CdcReportByteCount      0x40 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
 
 #define P1HidNo 0x01            // Player1 HID Endpoint Index
 #define P2HidNo 0x03            // Player2 HID Endpoint Index
+#define CdcNo   0x05            // Serial EndPoint
 
 #define HidInterfaceNumber      P1HidNo // Interface For our HID
 #define EP0Id   0x00
@@ -40,11 +41,7 @@ typedef unsigned short uint16_t;
 #define CONFIG_HEADER_SIZE      0x09
 #define DeviceDescriptorSize    0x12
 
-// Actual USB Data Buffers
-//extern volatile uint8_t HIDRxBuffer[HidReportByteCount];
-//extern volatile uint8_t HIDTxBuffer[HidReportByteCount];
 
-uint8_t* getHIDTxBuffer(uint8_t InterfaceNo);
 
 /***********************/
 /* Descriptors         */

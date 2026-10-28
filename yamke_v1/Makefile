@@ -25,7 +25,7 @@ CC_DEVICE = 16f1459
 
 ########## Build settings ##########
 
-CFLAGS = --use-non-free --stack-size 16 --opt-code-speed --std-sdcc99 -DNO_BIT_DEFINES
+CFLAGS = --use-non-free --stack-size 16 --opt-code-speed --std-sdcc99 -DNO_BIT_DEFINES -Wl-m
 LDFLAGS = -Wl-s16f145x_bootloader_512.lkr
 PROG = ../usb16f1prog	# change this once you've installed the script
 PORT = -p /dev/ttyACM0
@@ -62,7 +62,7 @@ flash: $(HEX)
 
 # Clean
 clean:
-	rm -f $(SRC:.c=.asm) $(SRC:.c=.lst) $(SRC:.c=.o) $(ASM:.S=.lst) $(ASM:.S=.o) $(HEX) $(OUT).cod $(OUT).lst
+	rm -f $(SRC:.c=.asm) $(SRC:.c=.lst) $(SRC:.c=.o) $(ASM:.S=.lst) $(ASM:.S=.o) $(HEX) $(OUT).cod $(OUT).lst $(OUT).map
 
 .PHONY: all flash clean dis 
 

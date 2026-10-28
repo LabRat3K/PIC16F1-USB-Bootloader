@@ -74,6 +74,10 @@ volatile uint8_t db_PlayerB = 0;
 static uint8_t last_PlayerA = 0;
 static uint8_t last_PlayerB = 0;
 
+// Tx Cache of switch states
+static uint8_t cachePlayerA = 0;
+static uint8_t cachePlayerB = 0;
+
 
 // memset : simple impelemtnation to loop and initialize memory
 //      
@@ -185,36 +189,40 @@ uint8_t Player2_Idx = 2;
 
 // ----------------------------------
 
-void PrepareTxBuffer(uint8_t InterfaceNo)
+void PrepareTxBuffer(uint8_t profile, uint8_t bitfield, uint8_t InterfaceNo)
 {
-    uint8_t i=2;
-    uint8_t* HIDTxBuffer = GetHIDTxBuffer(InterfaceNo);
+    uint8_t payloadIdx=2;
+    uint8_t* HIDTxBuffer = GetEpTxBuffer(InterfaceNo);
 
-    HIDTxBuffer[0] = 0x00;                          // Modifier Key Bits (we are not using any)
-    HIDTxBuffer[1] = 0x00;                          // Second Byte always 0 (Padding Byte)
+    memset(HIDTxBuffer, 0, 6);
+    //HIDTxBuffer[0] = 0x00;                          // Modifier Key Bits (we are not using any)
+    //HIDTxBuffer[1] = 0x00;                          // Second Byte always 0 (Padding Byte)
 
-#ifdef NEW_MAME_ENCODER
+   uint8_t i;
+   for (i=0;i<6;i++) {
+      if (bitfield | 1<<i) {
+         if (kbd_scancodes[profile][i*2+1]) {
+            HIDTxBuffer[0] |= kbd_scancodes[profile][i*2];
+         } else {
+            HIDTxBuffer[payloadIdx]= kbd_scancodes[profile][i*2];
+            payloadIdx++;
+         }
+      }
+   }
+   for (i=payloadIdx;i<8;i++){
+      HIDTxBuffer[i] = 0;
+   }
    // For P1 or P2 - scan the 6 bits of the current state
    // If the bit is HIGH - lookup keypress (or modifier pressed) in the kbd_scancodes array
    // (max 6 possible concurrent output)
    // HIDTxBuffer[2..7] get assigned
-
-   // store change state as current state (prevent re-send if nothing further changes)
-#else
-   HIDTxBuffer[2] = 0x00;
-   HIDTxBuffer[3] = 0x00;
-   HIDTxBuffer[4] = 0x00;
-   HIDTxBuffer[5] = 0x00;
-   HIDTxBuffer[6] = 0x00;
-   HIDTxBuffer[7] = 0x00;
-#endif
 }
 
 
 void ProcessIncommingData(uint8_t InterfaceNo)
 {
     log_byte(':');
-    uint8_t* HIDRxBuffer = GetHIDRxBuffer(InterfaceNo);
+    uint8_t* HIDRxBuffer = GetEpRxBuffer(InterfaceNo);
 
     // Windows Will send only a single Byte
     // with statuses of leds
@@ -224,14 +232,49 @@ void ProcessIncommingData(uint8_t InterfaceNo)
     P2LED = (HIDRxBuffer[0] & 0x02)==0;
 }
 
+
+void ProcessSerial(uint8_t InterfaceNo,uint8_t count) 
+{
+    uint8_t i;
+    uint8_t* CdcRxBuffer = GetEpRxBuffer(InterfaceNo);
+    uint8_t* CdcTxBuffer = GetEpTxBuffer(InterfaceNo);
+
+   // For now do nothing... but will want to reivew the BDT[EP].CNT and then cycle through bytes
+   for (i=0;i<count;i++){
+     *CdcTxBuffer = *CdcRxBuffer;
+      CdcRxBuffer++;
+      CdcTxBuffer++;
+   }
+
+   CDCSend(CdcNo,count);
+}
+
+
 static void CheckUsb(void)
 {
-    if(IsUsbDataAvailable(HidInterfaceNumber) > 0 )
+    if(IsUsbDataAvailable(P1HidNo) > 0 )
     {
-        log_byte('Z');
-        ProcessIncommingData(HidInterfaceNumber);
-        ReArmInterface(HidInterfaceNumber);
+        log_byte('1');
+        ProcessIncommingData(P1HidNo);
+        ReArmInterface(P1HidNo);
     }
+
+    if(IsUsbDataAvailable(P2HidNo) > 0 )
+    {
+        log_byte('2');
+        ProcessIncommingData(P2HidNo);
+        ReArmInterface(P2HidNo);
+    }
+
+    uint8_t cdcCount = IsUsbDataAvailable(CdcNo);
+    if(cdcCount > 0 )
+    {
+        log_byte('~');
+        ProcessSerial(CdcNo,cdcCount);
+        ReArmInterface(CdcNo);
+    }
+
+
 }
 
 void ProcessIO(void)
@@ -241,14 +284,14 @@ void ProcessIO(void)
 
 
     // Check Status Of the Keyboard 
-    if (P1changed) {
-        PrepareTxBuffer(P1HidNo);
-        P1changed = HIDSend(P1HidNo);
+    if (cachePlayerA != db_PlayerA) {
+        PrepareTxBuffer(Player1_Idx, db_PlayerA, P1HidNo);
+        if (HIDSend(P1HidNo)) cachePlayerA = db_PlayerA;
     }
 
-    if (P2changed) {
-        PrepareTxBuffer(P2HidNo);
-        P2changed = HIDSend(P2HidNo);
+    if (cachePlayerB != db_PlayerB) {
+        PrepareTxBuffer(Player2_Idx,db_PlayerB, P2HidNo);
+        if (HIDSend(P2HidNo)) cachePlayerB = db_PlayerB;
     }
 
 }

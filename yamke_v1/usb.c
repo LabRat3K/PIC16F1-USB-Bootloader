@@ -181,8 +181,8 @@ volatile uint8_t ControlTransferBuffer[E0SZ];
 // !!! Won't work without it.
 // *** LABRAT: SDCC needed to declare the BANKED start address (as we are only using EP0 & 1 .. fits in a single bank so no need to worry)
 //volatile Interface Interfaces[InterfaceCount + 1] @ 0x2000;
-volatile __data __at (0x20) Interface Interfaces[InterfaceCount + 1];
-//__at (0x2000) volatile Interface Interfaces[InterfaceCount + 1];
+//volatile __data __at (0x20) Interface Interfaces[InterfaceCount + 1];
+__at (0x2000) volatile Interface Interfaces[InterfaceCount + 1];
 // ... The hours I've waisted before I found out... :(
 
 
@@ -219,20 +219,37 @@ void ReArmInterface(uint8_t InterfaceNo)
     }
 }
 
-uint8_t* GetHIDTxBuffer(uint8_t InterfaceNo) {
+
+uint8_t* GetEpTxBuffer(uint8_t InterfaceNo) {
    return Buffers[InterfaceNo*2].Buffer;
 }
 
-uint8_t* GetHIDRxBuffer(uint8_t InterfaceNo) {
+uint8_t* GetEpRxBuffer(uint8_t InterfaceNo) {
    return Buffers[InterfaceNo*2+1].Buffer;
 }
 
-// Return logic appears reversed, but it isn't. We can assign this to the 
-// "has changed" byte of the caller, with no need for a comparioson/test. 
+uint8_t CDCSend(uint8_t InterfaceNo, uint8_t count)
+{
+    // If the CPU still owns the SIE, then don't try to send anything.
+    if (Interfaces[InterfaceNo].Input.Stat & UOWN) return 0;
+
+    // Toggle the data bit and give control to the SIE
+    Interfaces[InterfaceNo].Input.Cnt =  count;
+
+    if (Interfaces[InterfaceNo].Input.Stat & DTS) {
+        Interfaces[InterfaceNo].Input.Stat = DTSEN;
+        Interfaces[InterfaceNo].Input.Stat |= UOWN;
+    } else {
+        Interfaces[InterfaceNo].Input.Stat = DTS | DTSEN;
+        Interfaces[InterfaceNo].Input.Stat |= UOWN;
+    }
+    return 1;
+}
+
 uint8_t HIDSend(uint8_t InterfaceNo)
 {
     // If the CPU still owns the SIE, then don't try to send anything.
-    if (Interfaces[InterfaceNo].Input.Stat & UOWN) return 1;
+    if (Interfaces[InterfaceNo].Input.Stat & UOWN) return 0;
 
     // Toggle the data bit and give control to the SIE
     Interfaces[InterfaceNo].Input.Cnt =  Buffers[InterfaceNo * 2].Size;
@@ -244,7 +261,7 @@ uint8_t HIDSend(uint8_t InterfaceNo)
         Interfaces[InterfaceNo].Input.Stat = DTS | DTSEN;
         Interfaces[InterfaceNo].Input.Stat |= UOWN;
     }
-    return 0;
+    return 1;
 }
 
 // After configuration is complete, this routine is called to initialize
