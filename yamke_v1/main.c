@@ -33,6 +33,7 @@ LEDMAP: C0,C1
  */
 
 //#define LOGGING
+#define HID_LEDS
 
 #include "usb.h"
 #include <pic14regs.h>
@@ -78,20 +79,11 @@ static uint8_t last_PlayerB = 0;
 static uint8_t cachePlayerA = 0;
 static uint8_t cachePlayerB = 0;
 
+// Note: Player Index is EVEN numbered, with key modifier = IDX+1 
+// Theses denote the profile associated with each player (0,2,4,6,8)
+uint8_t Player1_Idx = 0;
+uint8_t Player2_Idx = 2; 
 
-// memset : simple impelemtnation to loop and initialize memory
-//      
-// --------------------------------------------------------------
-static void memset (void *buf, unsigned char ch, unsigned char count) 
-{
-  register unsigned char *ret = buf;
-
-  while (count--)
-    {
-      *(unsigned char *)ret = ch;
-      ++ret;
-    }
-}
 
 APP_CONFIG(0 /*USB_BUS_POWERED*/, 20 );
 
@@ -102,6 +94,7 @@ void app_interrupt( void )
        ProcessUSBTransactions();
     }
 
+    // ------- GPIO POLLING ON TIMER2 -----
     // Check Timer2 Interrupt Flag
     if (PIR1bits.TMR2IF) {
         PIR1bits.TMR2IF = 0; // Clear Flag
@@ -109,14 +102,14 @@ void app_interrupt( void )
         uint8_t current;
         uint8_t stable_mask;
 
-        // --- Process PORTA ---
+        // --- Process PLAYER1 ---
         //P1:0x0,0x0,A4,C5,C4,C3,A5,C6
         current = (PORTAbits.RA4<<5) | ((PORTC&0x38)>>1) | (PORTAbits.RA5<<1) | PORTCbits.RC6;
         stable_mask = ~(current ^ last_PlayerA); // Bits are 1 if matching previous tick
         last_PlayerA = current;
         db_PlayerA = (db_PlayerA & ~stable_mask) | (current & stable_mask); // Update only stable bits
 
-        // --- Process PORTB ---
+        // --- Process PLAYER2 ---
         //P2:0x0,0x0,B7,B6,B5,B4,C7,C2
         current = (PORTB&0xF0)>>2 | PORTCbits.RC7<<1 | PORTCbits.RC2;
         stable_mask = ~(current ^ last_PlayerB);
@@ -165,9 +158,6 @@ static void EnableInterrupts(void)
     PIE2bits.USBIE = 1;     // Enable Usb Global Interrupt
 }
 
-// ------- GPIO POLLING -----
-uint8_t P1changed = 0;
-uint8_t P2changed = 0;
 
 
 // LabRat's key encoder is limited to 6 possible inputs per player (joystick(4) and 2 buttons)
@@ -183,10 +173,6 @@ uint8_t const kbd_scancodes[6][10] = {
   {KEY_RIGHT,       0,   KEY_G,      0,   KEY_L,           0,   KEY_U,      0,   KEY_NONE,      0},   // Joystick right
 };
 
-// Note: Player Index is EVEN numbered, with key modifier = IDX+1 
-uint8_t Player1_Idx = 0;
-uint8_t Player2_Idx = 2; 
-
 // ----------------------------------
 
 void PrepareTxBuffer(uint8_t profile, uint8_t bitfield, uint8_t InterfaceNo)
@@ -194,28 +180,23 @@ void PrepareTxBuffer(uint8_t profile, uint8_t bitfield, uint8_t InterfaceNo)
     uint8_t payloadIdx=2;
     uint8_t* HIDTxBuffer = GetEpTxBuffer(InterfaceNo);
 
-    memset(HIDTxBuffer, 0, 6);
-    //HIDTxBuffer[0] = 0x00;                          // Modifier Key Bits (we are not using any)
-    //HIDTxBuffer[1] = 0x00;                          // Second Byte always 0 (Padding Byte)
+    HIDTxBuffer[0] = 0x00;                          // Modifier Key Bits (we are not using any)
+    HIDTxBuffer[1] = 0x00;                          // Second Byte always 0 (Padding Byte)
 
-   uint8_t i;
-   for (i=0;i<6;i++) {
-      if (bitfield | 1<<i) {
-         if (kbd_scancodes[profile][i*2+1]) {
-            HIDTxBuffer[0] |= kbd_scancodes[profile][i*2];
-         } else {
-            HIDTxBuffer[payloadIdx]= kbd_scancodes[profile][i*2];
-            payloadIdx++;
-         }
-      }
-   }
-   for (i=payloadIdx;i<8;i++){
-      HIDTxBuffer[i] = 0;
-   }
-   // For P1 or P2 - scan the 6 bits of the current state
-   // If the bit is HIGH - lookup keypress (or modifier pressed) in the kbd_scancodes array
-   // (max 6 possible concurrent output)
-   // HIDTxBuffer[2..7] get assigned
+    uint8_t i;
+    for (i=0;i<6;i++) {
+       if (bitfield | 1<<i) {
+          if (kbd_scancodes[profile][i*2+1]) {
+             HIDTxBuffer[0] |= kbd_scancodes[profile][i*2];
+          } else {
+             HIDTxBuffer[payloadIdx]= kbd_scancodes[profile][i*2];
+             payloadIdx++;
+          }
+       }
+    }
+    for (i=payloadIdx;i<8;i++){
+       HIDTxBuffer[i] = 0;
+    }
 }
 
 
@@ -227,28 +208,41 @@ void ProcessIncommingData(uint8_t InterfaceNo)
     // Windows Will send only a single Byte
     // with statuses of leds
     // first bit for num lock, second for caps etc..
+#ifdef HID_LEDS
 // DEBUGGING ONLY : use the SCOLL/CAPSLOCK leds 
     P1LED = (HIDRxBuffer[0] & 0x01)==0;
     P2LED = (HIDRxBuffer[0] & 0x02)==0;
+#endif
 }
 
 
 void ProcessSerial(uint8_t InterfaceNo,uint8_t count) 
 {
-    uint8_t i;
-    uint8_t* CdcRxBuffer = GetEpRxBuffer(InterfaceNo);
-    uint8_t* CdcTxBuffer = GetEpTxBuffer(InterfaceNo);
+   uint8_t* CdcRxBuffer = GetEpRxBuffer(InterfaceNo);
+   uint8_t* CdcTxBuffer = GetEpTxBuffer(InterfaceNo);
 
+#ifndef HID_LEDS
    // TODO: Update this to scan for LED update messages (0 though 4 based on player profile)
-
+    // Parse text stream (line by line?) 
+    // If token = CMD 
+    //      SET P1 = 0..4
+    //    If setting P1 Player1_Idx = new profile <<1;
+    //    If setting P2 Player2_Idx = new profile <<1;
+    //    If SAVE cmd - write profiles to the EEPROM 
+    // Parse text stream looking for LEDx = 1/0 strings
+    //   for each LEDx in string
+    //     if (x == Player1_Idx <<1 ) P1LED = on/off
+    //     if (x == Player2_Idx <<1 ) P2LED = on/off
+#else
    // For now do nothing... but will want to reivew the BDT[EP].CNT and then cycle through bytes
-   for (i=0;i<count;i++){
+   for (uint8_t i=0;i<count;i++){
      *CdcTxBuffer = *CdcRxBuffer;
       CdcRxBuffer++;
       CdcTxBuffer++;
    }
 
    CDCSend(CdcNo,count);
+#endif
 }
 
 
@@ -312,21 +306,10 @@ int app_main(void)
     EnableInterrupts(); 
     log_byte('I');
 
-    T1CON = 0x35;
-    TMR1H  = TMR1L = 0; // 43.69ms roll-over
-    PIR1bits.TMR1IF = 0; // Clear any previous TIMER
-
-
     while(1) {
       ProcessIO();
       log_service();
 
-
-      // Test for Timer Event
-      if (PIR1bits.TMR1IF==1) {
-         TMR1H = TMR1L = 0; // Reset timer for 43.69ms
-         PIR1bits.TMR1IF = 0;
-      }
 
       // Poll PROG_BUTTON
       if (PROG_BUTTON==0) {

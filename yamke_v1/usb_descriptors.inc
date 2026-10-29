@@ -84,7 +84,9 @@ typedef struct _configStruct
 __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
 {
     {
-        // Configuration descriptor
+    // ==========================================
+    // Configuration descriptor
+    // ==========================================
     0x09,   // Size of this descriptor in bytes
     0x02,   // CONFIGURATION descriptor type
     0x72,   // Total length of data for this cfg LSB
@@ -96,10 +98,12 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x32,   // Max power consumption (50 mA)
     },
     {
-        // HID0:: Keyboard HID Interface descriptor
+    // ==========================================
+    // HID0:: Keyboard HID Interface descriptor
+    // ==========================================
     0x09,   // Size of this descriptor in bytes
     0x04,   // INTERFACE descriptor type
-    IHID,   // Interface Number (0x00)
+    0x00,   // Interface Number
     0x00,   // Alternate Setting Number
     0x02,   // Number of endpoints in this interface
     0x03,   // Class code (HID)
@@ -108,7 +112,9 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x00,   // Interface String Descriptor Index
 
 
-        // Keyboard Class-Specific descriptor
+    // ==========================================
+    // Keyboard Class-Specific descriptor
+    // ==========================================
     0x09,   // Size of this descriptor in bytes
     0x21,   // HID descriptor type
     0x11,   // HID Spec Release Number in BCD format (1.11) LSB
@@ -119,7 +125,9 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x3F,   // Report Size LSB  (63 bytes)
     0x00,   // Report Size MSB
 
-    	// Keyboard Endpoint 1 In
+    // ==========================================
+    // Keyboard Endpoint 1 In
+    // ==========================================
     0x07,   // Size of this descriptor in bytes
     0x05,   // ENDPOINT descriptor type
     0x81,   // Endpoint Address
@@ -128,7 +136,9 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x00,   // Max Packet Size MSB
     0x01,   // Interval (1 millisecond)
 
-    	// Keyboard Endpoint 1 Out
+    // ===============================
+    // Keyboard Endpoint 1 Out
+    // ===============================
     0x07,   // Size of this descriptor in bytes
     0x05,   // ENDPOINT descriptor type
     0x01,   // Endpoint Address
@@ -137,19 +147,21 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x00,   // Max Packet Size MSB
     0x01,   // Interval (1 millisecond)
 
-    // ==========================================
+    // ===============================
     // INTERFACE 1: HID 2 
-    // ==========================================
+    // ===============================
     0x09, 0x04, 0x01, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, // HID Class
     0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x34, 0x00, // HID Descriptor
     0x07, 0x05, 0x82, 0x03, 0x08, 0x00, 0x01,             // Endpoint 2 IN
 
-    // ==========================================
+    // ==============================================
     // INTERFACE ASSOCIATION DESCRIPTOR (IAD) FOR CDC
-    // ==========================================
+    // ==============================================
     0x08, 0x0B, 0x02, 0x02, 0x02, 0x02, 0x01, 0x00,
 
+    // ===============================
     // INTERFACE 2: CDC Communication
+    // ===============================
     0x09, 0x04, 0x02, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00,
     0x05, 0x24, 0x00, 0x10, 0x01,                         // Header Functional
     0x05, 0x24, 0x01, 0x00, 0x03,                         // Call Management
@@ -157,7 +169,9 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x05, 0x24, 0x06, 0x02, 0x03,                         // Union Functional
     0x07, 0x05, 0x84, 0x03, 0x0A, 0x00, 0x40,             // Notification EP
 
+    // ===============================
     // INTERFACE 3: CDC Data
+    // ===============================
     0x09, 0x04, 0x03, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00,
     0x07, 0x05, 0x03, 0x02, 0x40, 0x00, 0x00,             // OUT Endpoint 3
     0x07, 0x05, 0x83, 0x02, 0x40, 0x00, 0x00              // IN Endpoint 3

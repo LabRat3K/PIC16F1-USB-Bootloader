@@ -22,15 +22,14 @@ typedef unsigned short uint16_t;
 #define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
 #define HidDescriptorSize       0x80 // Size Of HID Descriptor
 // HID
-#define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
-#define CdcReportByteCount      0x40 // Hid Report Size, also size of Buffers etc. ( Memory usage can go over the roof if not careful with this value)
+#define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc.
+#define CdcReportByteCount      0x40 
 
+#define EP0Id   0x00
 #define P1HidNo 0x01            // Player1 HID Endpoint Index
 #define P2HidNo 0x03            // Player2 HID Endpoint Index
 #define CdcNo   0x05            // Serial EndPoint
 
-#define HidInterfaceNumber      P1HidNo // Interface For our HID
-#define EP0Id   0x00
 
 // Strings
 #define SMAN 0x01   // Manufacturer Name String Index
