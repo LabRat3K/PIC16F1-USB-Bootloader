@@ -91,7 +91,7 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x02,   // CONFIGURATION descriptor type
     0x72,   // Total length of data for this cfg LSB
     0x00,   // Total length of data for this cfg MSB
-    INTF,   // Number of interfaces in this cfg
+    0x04, // INTF,   // Number of interfaces in this cfg
     0x01,   // Index value of this configuration
     SCON,   // Configuration string index
     0xA0,   // Attributes

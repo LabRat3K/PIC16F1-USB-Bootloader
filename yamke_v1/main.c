@@ -40,6 +40,8 @@ LEDMAP: C0,C1
 #include "usb_bootloader_config.h"
 #include "usb_hid_keys.h"
 #include "log.h"
+#include "stdio.h"
+#include "string.h"
 
 #define PROG_BUTTON         PORTAbits.RA3
 #define P1LED               LATCbits.LATC0
@@ -79,10 +81,10 @@ static uint8_t last_PlayerB = 0;
 static uint8_t cachePlayerA = 0;
 static uint8_t cachePlayerB = 0;
 
-// Note: Player Index is EVEN numbered, with key modifier = IDX+1 
+// Note: Player Index is EVEN numbered, with key modifier = IDX+1
 // Theses denote the profile associated with each player (0,2,4,6,8)
 uint8_t Player1_Idx = 0;
-uint8_t Player2_Idx = 2; 
+uint8_t Player2_Idx = 2;
 
 
 APP_CONFIG(0 /*USB_BUS_POWERED*/, 20 );
@@ -143,7 +145,7 @@ static void InitializeSystem(void)
     T2CONbits.T2CKPS  = 0b01;    // 1:4 Prescaler
     PR2 = 250;                   // Match value for 1ms intervals at 48MHz/4
     PIE1bits.TMR2IE = 1;         // Enable Timer2 Interrupts
-    T2CONbits.TMR2ON = 1;        // Turn on timer   
+    T2CONbits.TMR2ON = 1;        // Turn on timer
 
     // Enable Logging
     uart_init();
@@ -161,7 +163,7 @@ static void EnableInterrupts(void)
 
 
 // LabRat's key encoder is limited to 6 possible inputs per player (joystick(4) and 2 buttons)
-// So each profile (player 1-4) is listed, with SLOT 5 being for a "COIN DOOR" profile. 
+// So each profile (player 1-4) is listed, with SLOT 5 being for a "COIN DOOR" profile.
 // Key order: 0..7 Select, Up, Fire, Left, Down, Right
 uint8_t const kbd_scancodes[6][10] = {
   // Player 1            Player 2         Player 3             Player 4          COIN DOOR
@@ -209,30 +211,57 @@ void ProcessIncommingData(uint8_t InterfaceNo)
     // with statuses of leds
     // first bit for num lock, second for caps etc..
 #ifdef HID_LEDS
-// DEBUGGING ONLY : use the SCOLL/CAPSLOCK leds 
+// DEBUGGING ONLY : use the SCOLL/CAPSLOCK leds
     P1LED = (HIDRxBuffer[0] & 0x01)==0;
     P2LED = (HIDRxBuffer[0] & 0x02)==0;
 #endif
 }
 
 
-void ProcessSerial(uint8_t InterfaceNo,uint8_t count) 
+void ProcessSerial(uint8_t InterfaceNo,uint8_t count)
 {
    uint8_t* CdcRxBuffer = GetEpRxBuffer(InterfaceNo);
    uint8_t* CdcTxBuffer = GetEpTxBuffer(InterfaceNo);
 
 #ifndef HID_LEDS
    // TODO: Update this to scan for LED update messages (0 though 4 based on player profile)
-    // Parse text stream (line by line?) 
-    // If token = CMD 
-    //      SET P1 = 0..4
-    //    If setting P1 Player1_Idx = new profile <<1;
-    //    If setting P2 Player2_Idx = new profile <<1;
-    //    If SAVE cmd - write profiles to the EEPROM 
-    // Parse text stream looking for LEDx = 1/0 strings
-    //   for each LEDx in string
-    //     if (x == Player1_Idx <<1 ) P1LED = on/off
-    //     if (x == Player2_Idx <<1 ) P2LED = on/off
+   // Parse text stream (line by line?)
+   // If token = CMD
+   //      SET P1 = 0..4
+   //    If setting P1 Player1_Idx = new profile <<1;
+   //    If setting P2 Player2_Idx = new profile <<1;
+   //    If SAVE cmd - write profiles to the EEPROM
+   // Parse text stream looking for LEDx = 1/0 strings
+   //   for each LEDx in string
+   //     if (x == Player1_Idx <<1 ) P1LED = on/off
+   //     if (x == Player2_Idx <<1 ) P2LED = on/off
+/**
+ * Parses the USB CDC receive buffer for "ledX = Y" commands.
+ * @param buffer - Pointer to the USB receive buffer
+ * @param length - Number of bytes actually received
+ */
+   // 1. Ensure the buffer is null-terminated so string functions are safe
+   if (count < sizeof(CdcRxBuffer)) {
+       CdcRxBuffer[count] = '\0';
+   } else {
+       CdcRxBuffer[63] = '\0'; // Prevents buffer overflow
+   }
+
+   // Variables to hold parsed values
+   int led_num = 0;
+   int led_state = 0;
+
+   // 2. Parse using sscanf. It looks for the literal "led", an integer,
+   // the literal " = ", and a second integer.
+   // sscanf returns the number of successfully matched fields (we expect 2).
+   if (sscanf(CdcRxBuffer, "led%d = %d", &led_num, &led_state) == 2)
+   {
+       // 3. Execute the command based on the parsed values
+       if (led_num<<1 == Player1_Idx) P1LED = led_state;
+       if (led_num<<1 == Player2_Idx) P2LED = led_state;
+   }
+
+// ToDo: Could there be multiple strings per USB packet?
 #else
    // For now do nothing... but will want to reivew the BDT[EP].CNT and then cycle through bytes
    for (uint8_t i=0;i<count;i++){
@@ -248,29 +277,27 @@ void ProcessSerial(uint8_t InterfaceNo,uint8_t count)
 
 static void CheckUsb(void)
 {
-    if(IsUsbDataAvailable(P1HidNo) > 0 )
-    {
-        log_byte('1');
-        ProcessIncommingData(P1HidNo);
-        ReArmInterface(P1HidNo);
-    }
+   if(IsUsbDataAvailable(P1HidNo) > 0 )
+   {
+       log_byte('1');
+       ProcessIncommingData(P1HidNo);
+       ReArmInterface(P1HidNo);
+   }
 
-    if(IsUsbDataAvailable(P2HidNo) > 0 )
-    {
-        log_byte('2');
-        ProcessIncommingData(P2HidNo);
-        ReArmInterface(P2HidNo);
-    }
+   if(IsUsbDataAvailable(P2HidNo) > 0 )
+   {
+       log_byte('2');
+       ProcessIncommingData(P2HidNo);
+       ReArmInterface(P2HidNo);
+   }
 
-    uint8_t cdcCount = IsUsbDataAvailable(CdcNo);
-    if(cdcCount > 0 )
-    {
-        log_byte('~');
-        ProcessSerial(CdcNo,cdcCount);
-        ReArmInterface(CdcNo);
-    }
-
-
+   uint8_t cdcCount = IsUsbDataAvailable(CdcNo);
+   if(cdcCount > 0 )
+   {
+       log_byte('~');
+       ProcessSerial(CdcNo,cdcCount);
+       ReArmInterface(CdcNo);
+   }
 }
 
 void ProcessIO(void)
@@ -279,7 +306,7 @@ void ProcessIO(void)
     if (IsUsbReady) CheckUsb();
 
 
-    // Check Status Of the Keyboard 
+    // Check Status Of the Keyboard
     if (cachePlayerA != db_PlayerA) {
         PrepareTxBuffer(Player1_Idx, db_PlayerA, P1HidNo);
         if (HIDSend(P1HidNo)) cachePlayerA = db_PlayerA;
@@ -303,7 +330,7 @@ int app_main(void)
     EnableUSBModule();
     log_byte('E');
 
-    EnableInterrupts(); 
+    EnableInterrupts();
     log_byte('I');
 
     while(1) {
