@@ -8,6 +8,9 @@
 #ifndef USBSHARED_H
 #define	USBSHARED_H
 
+//#define INC_CDC
+#define INC_HID2
+
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 
@@ -27,8 +30,8 @@ typedef unsigned short uint16_t;
 
 #define EP0Id   0x00
 #define P1HidNo 0x01            // Player1 HID Endpoint Index
-#define P2HidNo 0x03            // Player2 HID Endpoint Index
-#define CdcNo   0x05            // Serial EndPoint
+#define P2HidNo 0x02            // Player2 HID Endpoint Index
+#define CdcNo   0x03            // Serial EndPoint
 
 
 // Strings
@@ -51,10 +54,32 @@ extern __at (0x1E00) const uint8_t DeviceDescriptor[];
 
 // ...Stuck these here to keep the number of files to minimum
 #define HRBC HidReportByteCount
+#ifdef INC_CDC
+   #define CDC_CONFIG_LENGTH (66)
+   #define NUM_CDC_INTF (2)
+#else
+   #define CDC_CONFIG_LENGTH (0)
+   #define NUM_CDC_INTF (0)
+#endif
+
+#ifdef INC_HID2
+   #define HID2_CONFIG_LENGTH (25)
+   #define NUM_HID2_INTF (1)
+#else
+   #define HID2_CONFIG_LENGTH (0)
+   #define NUM_HID2_INTF (0)
+#endif
+
+#define HID1_CONFIG_LENGTH (32)
+
 typedef struct _configStruct
 {
     uint8_t configHeader[CONFIG_HEADER_SIZE];
-    uint8_t HIDDescriptor[HidDescriptorSize];
+    uint8_t HID1Descriptor[HID1_CONFIG_LENGTH];
+    uint8_t HID2Descriptor[HID2_CONFIG_LENGTH];
+#ifdef INC_CDC
+    uint8_t CDCDescriptor[CDC_CONFIG_LENGTH];
+#endif
 } ConfigStruct;
 
 // Configuration descriptor

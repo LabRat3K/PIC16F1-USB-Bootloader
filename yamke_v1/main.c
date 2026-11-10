@@ -32,7 +32,7 @@ P2:0x0,0x0,B7,B6,B5,B4,C7,C2
 LEDMAP: C0,C1
  */
 
-//#define LOGGING
+#define USB_ENABLED
 #define HID_LEDS
 
 #include "usb.h"
@@ -92,9 +92,11 @@ APP_CONFIG(0 /*USB_BUS_POWERED*/, 20 );
 // Interrupt
 void app_interrupt( void )
 {
+ #ifdef USB_ENABLED
     if (UsbInterrupt) {
        ProcessUSBTransactions();
     }
+ #endif
 
     // ------- GPIO POLLING ON TIMER2 -----
     // Check Timer2 Interrupt Flag
@@ -218,6 +220,7 @@ void ProcessIncommingData(uint8_t InterfaceNo)
 }
 
 
+#ifdef INC_CDC
 void ProcessSerial(uint8_t InterfaceNo,uint8_t count)
 {
    uint8_t* CdcRxBuffer = GetEpRxBuffer(InterfaceNo);
@@ -273,10 +276,12 @@ void ProcessSerial(uint8_t InterfaceNo,uint8_t count)
    CDCSend(CdcNo,count);
 #endif
 }
+#endif
 
 
 static void CheckUsb(void)
 {
+  #ifdef USB_ENABLED
    if(IsUsbDataAvailable(P1HidNo) > 0 )
    {
        log_byte('1');
@@ -284,13 +289,16 @@ static void CheckUsb(void)
        ReArmInterface(P1HidNo);
    }
 
+#ifdef INC_HID2
    if(IsUsbDataAvailable(P2HidNo) > 0 )
    {
        log_byte('2');
        ProcessIncommingData(P2HidNo);
        ReArmInterface(P2HidNo);
    }
+#endif
 
+#ifdef INC_CDC
    uint8_t cdcCount = IsUsbDataAvailable(CdcNo);
    if(cdcCount > 0 )
    {
@@ -298,6 +306,8 @@ static void CheckUsb(void)
        ProcessSerial(CdcNo,cdcCount);
        ReArmInterface(CdcNo);
    }
+#endif
+  #endif
 }
 
 void ProcessIO(void)
@@ -324,12 +334,15 @@ int app_main(void)
     InitializeSystem();
     log_byte('S');
 
+    P2LED = 1;
+#ifdef USB_ENABLED
     InitializeUSB();
     log_byte('U');
 
     EnableUSBModule();
     log_byte('E');
 
+#endif
     EnableInterrupts();
     log_byte('I');
 

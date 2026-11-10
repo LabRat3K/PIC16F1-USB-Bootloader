@@ -3,6 +3,8 @@
 #define _log_h_
 #include <pic14regs.h>
 
+//#define LOGGING 
+
 #ifdef LOGGING
 // Constants
 volatile extern unsigned char LOG_HEAD;

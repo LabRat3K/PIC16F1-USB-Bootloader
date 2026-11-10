@@ -66,7 +66,9 @@ extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, 
 void InitializeUSB(void);
 void EnableUSBModule(void);
 uint8_t HIDSend(uint8_t InterfaceNo);
+#ifdef INC_CDC
 uint8_t CDCSend(uint8_t InterfaceNo,uint8_t count);
+#endif
 void ProcessUSBTransactions(void);
 void ReArmInterface(uint8_t InterfaceNo);
 uint8_t IsUsbDataAvailable(uint8_t InterfaceNo);

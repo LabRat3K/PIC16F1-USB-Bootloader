@@ -90,7 +90,7 @@ void log_char(char data, unsigned char FMT) {
 void mlog_hex(char data) {
    log_hex(data,LOG_FMT_FLAGS);
    LOG_FMT_FLAGS = LOG_FMT_FLAGS-1;
-   if (LOG_FMT_FLAGS&0x0F ==0) {
+   if ((LOG_FMT_FLAGS&0x0F) ==0) {
       LOG_FMT_FLAGS = 0;
    }
 } 

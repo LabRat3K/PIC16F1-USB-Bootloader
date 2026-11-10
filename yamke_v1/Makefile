@@ -9,7 +9,7 @@
 ########## Project-specific definitions ##########
 
 # Project name
-OUT = main
+OUT = yamke_v1
 
 # Source files to compile
 SRC = main.c usb.c log.c
@@ -26,6 +26,7 @@ CC_DEVICE = 16f1459
 ########## Build settings ##########
 
 CFLAGS = --use-non-free --stack-size 16 --opt-code-speed --std-sdcc99 -DNO_BIT_DEFINES -Wl-m
+#CFLAGS = --use-non-free --stack-size 16 --opt-code-speed --std-sdcc99 -DNO_BIT_DEFINES
 LDFLAGS = -Wl-s16f145x_bootloader_512.lkr
 PROG = ../usb16f1prog	# change this once you've installed the script
 PORT = -p /dev/ttyACM0

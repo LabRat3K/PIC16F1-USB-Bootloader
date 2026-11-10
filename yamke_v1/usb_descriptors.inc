@@ -14,31 +14,32 @@
 
 #include "usb_shared.h"
 
-// LabRat: re-check these .. 
-#define EP0_OUT  0
-#define EP0_IN   1
-#define EP1_IN   2  // HID 1
-#define EP2_IN   4  // HID 2
-#define EP3_IN   6  // CDC Notification
-#define EP4_OUT  8  // CDC Bulk Out
-#define EP4_IN   9  // CDC Bulk In
-
 // Allocate endpoint payload buffers elsewhere inside the USB RAM (0x2040 - 0x21FF)
+/*
 __at (0x2040) volatile uint8_t ep0_out_buf[64];
 __at (0x2080) volatile uint8_t ep0_in_buf[64];
+*/
 __at (0x20C0) volatile uint8_t hid1_out_buf[HidReportByteCount];
 __at (0x20C8) volatile uint8_t hid1_in_buf[HidReportByteCount];
 __at (0x20D0) volatile uint8_t hid2_out_buf[HidReportByteCount];
 __at (0x20D8) volatile uint8_t hid2_in_buf[HidReportByteCount];
 __at (0x2100) volatile uint8_t cdc_out_buf[CdcReportByteCount];
 __at (0x2140) volatile uint8_t cdc_in_buf[CdcReportByteCount];
+/*
+volatile uint8_t hid1_out_buf[HidReportByteCount];
+volatile uint8_t hid1_in_buf[HidReportByteCount];
+volatile uint8_t hid2_out_buf[HidReportByteCount];
+volatile uint8_t hid2_in_buf[HidReportByteCount];
+volatile uint8_t cdc_out_buf[CdcReportByteCount];
+volatile uint8_t cdc_in_buf[CdcReportByteCount];
+*/
 
 BufferInfo Buffers[(InterfaceCount * 2)] =
 {
     { HidReportByteCount, (uint8_t*)&hid1_in_buf },
     { HidReportByteCount, (uint8_t*)&hid1_out_buf},
-    { HidReportByteCount, (uint8_t*)&hid1_in_buf },
-    { HidReportByteCount, (uint8_t*)&hid1_out_buf},
+    { HidReportByteCount, (uint8_t*)&hid2_in_buf },
+    { HidReportByteCount, (uint8_t*)&hid2_out_buf},
     { CdcReportByteCount, (uint8_t*)&cdc_in_buf },
     { CdcReportByteCount, (uint8_t*)&cdc_out_buf}
 };
@@ -77,9 +78,12 @@ __at (0x1E00) const uint8_t DeviceDescriptor[]=
 typedef struct _configStruct
 {
     uint8_t configHeader[CONFIG_HEADER_SIZE];
-    uint8_t HIDDescriptor[HidDescriptorSize];
+    uint8_t HID1Descriptor[Hid1DescriptorSize];
+    uint8_t HID2Descriptor[Hid2DescriptorSize];
+    uint8_t CDCDescriptor[CdcDescriptorSize];
 } ConfigStruct;
 */
+
 // Configuration descriptor
 __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
 {
@@ -89,12 +93,12 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     // ==========================================
     0x09,   // Size of this descriptor in bytes
     0x02,   // CONFIGURATION descriptor type
-    0x72,   // Total length of data for this cfg LSB
+    9+HID1_CONFIG_LENGTH+CDC_CONFIG_LENGTH+HID2_CONFIG_LENGTH,   // Total length of data for this cfg LSB
     0x00,   // Total length of data for this cfg MSB
-    0x04, // INTF,   // Number of interfaces in this cfg
+    0x01+NUM_CDC_INTF+NUM_HID2_INTF,  // Number of interfaces in this cfg
     0x01,   // Index value of this configuration
     SCON,   // Configuration string index
-    0xA0,   // Attributes
+    0x80,   // Attributes
     0x32,   // Max power consumption (50 mA)
     },
     {
@@ -125,9 +129,9 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x3F,   // Report Size LSB  (63 bytes)
     0x00,   // Report Size MSB
 
-    // ==========================================
-    // Keyboard Endpoint 1 In
-    // ==========================================
+    // ==============================
+    // Keyboard Endpoint 1 In (0x81)
+    // ==============================
     0x07,   // Size of this descriptor in bytes
     0x05,   // ENDPOINT descriptor type
     0x81,   // Endpoint Address
@@ -137,7 +141,7 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x01,   // Interval (1 millisecond)
 
     // ===============================
-    // Keyboard Endpoint 1 Out
+    // Keyboard Endpoint 1 Out (0x01)
     // ===============================
     0x07,   // Size of this descriptor in bytes
     0x05,   // ENDPOINT descriptor type
@@ -146,36 +150,43 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     HRBC,   // Max Packet Size LSB
     0x00,   // Max Packet Size MSB
     0x01,   // Interval (1 millisecond)
-
-    // ===============================
-    // INTERFACE 1: HID 2 
-    // ===============================
-    0x09, 0x04, 0x01, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, // HID Class
-    0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x34, 0x00, // HID Descriptor
+    },
+#ifdef INC_HID2
+    {
+    // =============================
+    // INTERFACE 1: HID 2  In (0x82)
+    // =============================
+    0x09, 0x04, 0x01, 0x00, 0x01, 0x03, 0x01, 0x01, 0x00, // HID Class
+    0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00, // HID Descriptor
     0x07, 0x05, 0x82, 0x03, 0x08, 0x00, 0x01,             // Endpoint 2 IN
+    },
+#endif
 
+#ifdef INC_CDC
+    {
     // ==============================================
     // INTERFACE ASSOCIATION DESCRIPTOR (IAD) FOR CDC
     // ==============================================
     0x08, 0x0B, 0x02, 0x02, 0x02, 0x02, 0x01, 0x00,
 
-    // ===============================
-    // INTERFACE 2: CDC Communication
-    // ===============================
-    0x09, 0x04, 0x02, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00,
-    0x05, 0x24, 0x00, 0x10, 0x01,                         // Header Functional
-    0x05, 0x24, 0x01, 0x00, 0x03,                         // Call Management
-    0x04, 0x24, 0x02, 0x02,                               // ACM Functional
-    0x05, 0x24, 0x06, 0x02, 0x03,                         // Union Functional
-    0x07, 0x05, 0x84, 0x03, 0x0A, 0x00, 0x40,             // Notification EP
-
-    // ===============================
-    // INTERFACE 3: CDC Data
-    // ===============================
-    0x09, 0x04, 0x03, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00,
+    // ========================================
+    // INTERFACE 2: CDC Data Out/In (0x03/0x83)
+    // ========================================
+    0x09, 0x04, 0x02, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00,
     0x07, 0x05, 0x03, 0x02, 0x40, 0x00, 0x00,             // OUT Endpoint 3
-    0x07, 0x05, 0x83, 0x02, 0x40, 0x00, 0x00              // IN Endpoint 3
+    0x07, 0x05, 0x83, 0x02, 0x40, 0x00, 0x00,             // IN Endpoint 3
+
+    // ========================================
+    // INTERFACE 3: CDC Communication In (0x84)
+    // ========================================
+    0x09, 0x04, 0x03, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00,
+    0x05, 0x24, 0x00, 0x10, 0x01,                         // Header Functional
+    0x05, 0x24, 0x01, 0x00, 0x02,                         // Call Management
+    0x04, 0x24, 0x02, 0x02,                               // ACM Functional
+    0x05, 0x24, 0x06, 0x03, 0x02,                         // Union Functional
+    0x07, 0x05, 0x84, 0x03, 0x08, 0x00, 0xFF              // Notification EP
     }
+#endif
 };
 
 // Report For Keyboard
@@ -218,10 +229,10 @@ __at (0x1E00+DeviceDescriptorSize + CONFIG_HEADER_SIZE+ HidDescriptorSize) const
 const struct{uint8_t bLength;uint8_t bDscType;uint16_t string[1];}StringDescriptor0={sizeof(StringDescriptor0),0x03,{0x0409}};
 
 const struct{uint8_t bLength;uint8_t bDscType;uint16_t string[11];}StringDescriptor1={sizeof(StringDescriptor1),0x03,
-{'D','I','Y',' ','D','e','v','i','c','e','s'}};
+{'J','S','G',' ','P','r','o','d','u','c','t'}};
 
-const struct{uint8_t bLength;uint8_t bDscType;uint16_t string[20];}StringDescriptor2={sizeof(StringDescriptor2),0x03,
-{'Y','A','M','K','E',' ',':',' ','2','0','2','6',' ','V','E','R',':','1','.','0'}};
+const struct{uint8_t bLength;uint8_t bDscType;uint16_t string[19];}StringDescriptor2={sizeof(StringDescriptor2),0x03,
+{'Y','e','t',' ','A','n','o','t','h','e','r',' ','M','a','m','e','K','B','D'}};
 
 //Array of string descriptors
 const uint8_t *const StringDescriptorPointers[StringDescriptorCount]=
