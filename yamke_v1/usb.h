@@ -35,7 +35,8 @@
 #include "usb_shared.h"
 
 // Macros
-#define PTR16(x) ((unsigned int)(((unsigned long)x) & 0xFFFF))
+//#define PTR16(x) ((unsigned int)(((unsigned long)x) & 0xFFFF))
+#define PTR16(x) (((unsigned int)(x) < 0x2000) ? (((unsigned int)(x) - 0x0020) + 0x2000) : ((unsigned int)(x) & 0xFFFF))
 #define LSB(x) (x & 0xFF)
 #define MSB(x) ((x & 0xFF00) >> 8)
 #define ClearUsbInterruptFlag(x)        UIR &= ~(x)
@@ -63,6 +64,7 @@ typedef struct _BufferInfo
 extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, chap 9.1.1)
 
 // USB Functions
+extern void ProcessIncommingData(uint8_t led);
 void InitializeUSB(void);
 void EnableUSBModule(void);
 uint8_t HIDSend(uint8_t InterfaceNo);

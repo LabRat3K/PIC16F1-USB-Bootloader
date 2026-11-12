@@ -39,7 +39,6 @@ LEDMAP: C0,C1
 #include <pic14regs.h>
 #include "usb_bootloader_config.h"
 #include "usb_hid_keys.h"
-#include "log.h"
 #include "stdio.h"
 #include "string.h"
 
@@ -108,14 +107,15 @@ void app_interrupt( void )
 
         // --- Process PLAYER1 ---
         //P1:0x0,0x0,A4,C5,C4,C3,A5,C6
-        current = (PORTAbits.RA4<<5) | ((PORTC&0x38)>>1) | (PORTAbits.RA5<<1) | PORTCbits.RC6;
+        //current = (PORTAbits.RA4<<5) | ((PORTC&0x38)>>1) | (PORTAbits.RA5<<1) | PORTCbits.RC6;
+        current = (~((PORTAbits.RA4<<5) | ((PORTC&0x38)>>1) | (PORTAbits.RA5<<1) | PORTCbits.RC6))&0x3F;
         stable_mask = ~(current ^ last_PlayerA); // Bits are 1 if matching previous tick
         last_PlayerA = current;
         db_PlayerA = (db_PlayerA & ~stable_mask) | (current & stable_mask); // Update only stable bits
 
         // --- Process PLAYER2 ---
         //P2:0x0,0x0,B7,B6,B5,B4,C7,C2
-        current = (PORTB&0xF0)>>2 | PORTCbits.RC7<<1 | PORTCbits.RC2;
+        current = (~((PORTB&0xF0)>>2 | PORTCbits.RC7<<1 | PORTCbits.RC2))&0x3F;
         stable_mask = ~(current ^ last_PlayerB);
         last_PlayerB = current;
         db_PlayerB = (db_PlayerB & ~stable_mask) | (current & stable_mask);
@@ -132,9 +132,10 @@ static void InitializeSystem(void)
     LATB =          0x00;     // Clear Port B Latches
     LATA =          0x00;     // Clear Port A Latches
 
-/*
     ANSELA =        0x00;
+    ANSELB =        0x00;
     ANSELC =        0x00;
+/*
     OSCTUNE =       0x00;
     OSCCON =        0xFC;           // 16MHz HFINTOSC with 3x PLL enabled (48MHz operation)
     ACTCON =        0x90;           // Enable active clock tuning with USB
@@ -144,14 +145,11 @@ static void InitializeSystem(void)
     // Setup Timer2 for 1ms Debounce Checking
     T2CONbits.TMR2ON = 0;        // Turn off timer for now
     T2CONbits.T2OUTPS = 0b0000;  // 1:1 Postscaler
-    T2CONbits.T2CKPS  = 0b01;    // 1:4 Prescaler
-    PR2 = 250;                   // Match value for 1ms intervals at 48MHz/4
+    T2CONbits.T2CKPS  = 0b11;    // 1:4 Prescaler
+    PR2 = 187;                   // Match value for 1ms intervals at 48MHz/4
     PIE1bits.TMR2IE = 1;         // Enable Timer2 Interrupts
     T2CONbits.TMR2ON = 1;        // Turn on timer
 
-    // Enable Logging
-    uart_init();
-    log_init();
 }
 
 static void EnableInterrupts(void)
@@ -189,11 +187,11 @@ void PrepareTxBuffer(uint8_t profile, uint8_t bitfield, uint8_t InterfaceNo)
 
     uint8_t i;
     for (i=0;i<6;i++) {
-       if (bitfield | 1<<i) {
-          if (kbd_scancodes[profile][i*2+1]) {
-             HIDTxBuffer[0] |= kbd_scancodes[profile][i*2];
+       if (bitfield & (1<<i)) {
+          if (kbd_scancodes[i][profile+1]) {
+             HIDTxBuffer[0] |= kbd_scancodes[i][profile];
           } else {
-             HIDTxBuffer[payloadIdx]= kbd_scancodes[profile][i*2];
+             HIDTxBuffer[payloadIdx]= kbd_scancodes[i][profile];
              payloadIdx++;
           }
        }
@@ -204,18 +202,15 @@ void PrepareTxBuffer(uint8_t profile, uint8_t bitfield, uint8_t InterfaceNo)
 }
 
 
-void ProcessIncommingData(uint8_t InterfaceNo)
+void ProcessIncommingData(uint8_t leds)
 {
-    log_byte(':');
-    uint8_t* HIDRxBuffer = GetEpRxBuffer(InterfaceNo);
-
     // Windows Will send only a single Byte
     // with statuses of leds
     // first bit for num lock, second for caps etc..
 #ifdef HID_LEDS
 // DEBUGGING ONLY : use the SCOLL/CAPSLOCK leds
-    P1LED = (HIDRxBuffer[0] & 0x01)==0;
-    P2LED = (HIDRxBuffer[0] & 0x02)==0;
+    P1LED = (leds & 0x01)==0;
+    P2LED = (leds & 0x02)==0;
 #endif
 }
 
@@ -244,7 +239,7 @@ void ProcessSerial(uint8_t InterfaceNo,uint8_t count)
  * @param length - Number of bytes actually received
  */
    // 1. Ensure the buffer is null-terminated so string functions are safe
-   if (count < sizeof(CdcRxBuffer)) {
+   if (count < CdcReportByteCount) {
        CdcRxBuffer[count] = '\0';
    } else {
        CdcRxBuffer[63] = '\0'; // Prevents buffer overflow
@@ -284,16 +279,16 @@ static void CheckUsb(void)
   #ifdef USB_ENABLED
    if(IsUsbDataAvailable(P1HidNo) > 0 )
    {
-       log_byte('1');
-       ProcessIncommingData(P1HidNo);
+       uint8_t* HIDRxBuffer = GetEpRxBuffer(P1HidNo);
+       ProcessIncommingData(HIDRxBuffer[0]);
        ReArmInterface(P1HidNo);
    }
 
 #ifdef INC_HID2
    if(IsUsbDataAvailable(P2HidNo) > 0 )
    {
-       log_byte('2');
-       ProcessIncommingData(P2HidNo);
+       uint8_t* HIDRxBuffer = GetEpRxBuffer(P2HidNo);
+       ProcessIncommingData(HIDRxBuffer[0]);
        ReArmInterface(P2HidNo);
    }
 #endif
@@ -302,7 +297,6 @@ static void CheckUsb(void)
    uint8_t cdcCount = IsUsbDataAvailable(CdcNo);
    if(cdcCount > 0 )
    {
-       log_byte('~');
        ProcessSerial(CdcNo,cdcCount);
        ReArmInterface(CdcNo);
    }
@@ -312,43 +306,39 @@ static void CheckUsb(void)
 
 void ProcessIO(void)
 {
-    // Check USB for incomming Commands
-    if (IsUsbReady) CheckUsb();
+    if (!IsUsbReady) return;
 
+    // Check USB for incomming Commands
+    CheckUsb();
 
     // Check Status Of the Keyboard
     if (cachePlayerA != db_PlayerA) {
         PrepareTxBuffer(Player1_Idx, db_PlayerA, P1HidNo);
         if (HIDSend(P1HidNo)) cachePlayerA = db_PlayerA;
     }
-
+/*
     if (cachePlayerB != db_PlayerB) {
         PrepareTxBuffer(Player2_Idx,db_PlayerB, P2HidNo);
         if (HIDSend(P2HidNo)) cachePlayerB = db_PlayerB;
     }
-
+*/
 }
 
 int app_main(void)
 {
     InitializeSystem();
-    log_byte('S');
 
     P2LED = 1;
 #ifdef USB_ENABLED
     InitializeUSB();
-    log_byte('U');
 
     EnableUSBModule();
-    log_byte('E');
 
 #endif
     EnableInterrupts();
-    log_byte('I');
 
     while(1) {
       ProcessIO();
-      log_service();
 
 
       // Poll PROG_BUTTON

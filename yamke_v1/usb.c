@@ -5,6 +5,8 @@
  * Created on 13 October 2014, 17:46
  *
  * Firmware framework for USB I/O on PIC 16F1459 (and siblings)
+ * Updated by: Andrew Williams
+ * October 2026: Adding multiple HID and CDC support
  *
  * Based On
  *
@@ -31,7 +33,6 @@
 #include "usb.h"
 #include "usb_descriptors.inc"
 #include "pic16f1459.h"
-#include "log.h"
 
 /***********************/
 /* Local Definitions   */
@@ -166,11 +167,16 @@ uint8_t HidProtocol; // [0] Boot Protocol [1] Report Protocol
 const uint8_t *ROMoutPtr;  // Data to send to the host
 uint8_t *outPtr;           // Data to send to the host
 uint8_t *inPtr;            // Data from the host
-uint8_t transferType;	// 0=ram 1=rom
+uint8_t transferType;   // 0=ram 1=rom
 uint16_t wCount;            // Number of bytes of data
 
-volatile setupPacketStruct SetupPacket;
-volatile uint8_t ControlTransferBuffer[E0SZ];
+volatile __data __at (0x38) setupPacketStruct SetupPacket;
+volatile __data __at (0x48) uint8_t ControlTransferBuffer[E0SZ];
+
+#ifdef INC_CDC
+// Default 9600 baud, 1 stop bit, No parity, 8 data bits (0x00002580 = 9600)
+uint8_t LineCoding[7] = { 0x80, 0x25, 0x00, 0x00, 0x00, 0x00, 0x08 };
+#endif
 
 
 //volatile __data __at(0x0E99) uint8_t EndpointFlags[InterfaceCount]; // Endpoint Flag Registers
@@ -191,7 +197,7 @@ volatile __data __at (0x20) Interface Interfaces[InterfaceCount + 1];
 /***********************/
 uint8_t IsUsbDataAvailable(uint8_t InterfaceNo)
 {
-    if(InterfaceNo >= InterfaceCount) return 0;
+    if(InterfaceNo > InterfaceCount) return 0;
     if(!(Interfaces[InterfaceNo].Output.Stat & UOWN))
     {
         return Interfaces[InterfaceNo].Output.Cnt;
@@ -277,7 +283,7 @@ void HIDInitEndpoints(void)
     for (i = 0 ; i < InterfaceCount; i++)
     {
         // Turn on both in and out for this endpoint
-        EndpointFlags[i] = 0x1E;
+        EndpointFlags[i] = (i==3) ? 0x1A : 0x1E;
         Interfaces[i + 1].Output.Cnt = Buffers[(i * 2) + 1].Size;
 
         Interfaces[i + 1].Output.ADDR = PTR16(Buffers[(i * 2) + 1].Buffer);
@@ -291,30 +297,42 @@ void HIDInitEndpoints(void)
 }
 
 // Process HID specific requests
-void ProcessCDCRequest(void)
+void ProcessCDCRequest(uint8_t interfaceNum)
 {
-    uint8_t ep_id = USTAT&0x78;
-
-    if((SetupPacket.bmRequestType & 0x1F) != 0x01 || (SetupPacket.wIndex0 != 0x02)) return;
+    (void)interfaceNum;
+#ifdef INC_CDC
+    uint8_t bRequest = SetupPacket.bRequest;
 
     if ((SetupPacket.bmRequestType & 0x60) != 0x20) return;
 
-    // EP must be CDC EP
-    if ((ep_id != (CdcNo<<3) )&&(ep_id!= ((CdcNo+1)<<3)))   return; 
-
-    RequestHandled = 1;
-
+    if (bRequest == 0x20) // SET_LINE_CODING (Host-to-Device, 7 bytes)
+    {
+        // OutDataStage() receives the 7 bytes into ControlTransferBuffer
+        RequestHandled = 1;
+    }
+    else if (bRequest == 0x21) // GET_LINE_CODING (Device-to-Host, 7 bytes)
+    {
+        outPtr = LineCoding;
+        wCount = 7;
+        transferType = 0;
+        RequestHandled = 1;
+    }
+    else if (bRequest == 0x22) // SET_CONTROL_LINE_STATE (Zero-length, DTR/RTS in wValue0)
+    {
+        RequestHandled = 1;
+    }
+    else if (bRequest == 0x23) // SEND_BREAK
+    {
+        RequestHandled = 1;
+    }
+#endif
 }
 
 
 // Process HID specific requests
-void ProcessHIDRequest(void)
+void ProcessHIDRequest(uint8_t interfaceNum)
 {
     uint8_t bRequest;
-    uint8_t ep_id = USTAT&0x78;
-
-     // Has to be to an INTERFACE request (wIndex = interface ID)the HID interface
-    if((SetupPacket.bmRequestType & 0x1F) != 0x01 || (SetupPacket.wIndex0 > 0x01)) return;
 
     bRequest = SetupPacket.bRequest;
 
@@ -325,13 +343,16 @@ void ProcessHIDRequest(void)
         if (descriptorType == HID_DESCRIPTOR)
         {
             RequestHandled = 1;
-            if (SetupPacket.wIndex0 == 0) {
+            if (interfaceNum == 0) {
                ROMoutPtr = (const uint8_t*)&ConfigurationDescriptor.HID1Descriptor;
                wCount = sizeof(ConfigurationDescriptor.HID1Descriptor);
-            } else {
+            } 
+#ifdef INC_HID2
+            else {
                ROMoutPtr = (const uint8_t*)&ConfigurationDescriptor.HID2Descriptor;
                wCount = sizeof(ConfigurationDescriptor.HID2Descriptor);
-            } 
+            }
+#endif
             transferType=1;
         }
         else if (descriptorType == REPORT_DESCRIPTOR)
@@ -349,6 +370,7 @@ void ProcessHIDRequest(void)
         }
     }
 
+// TOOO: This might be redundant
     // If NOT a CLASS request, return
     if ((SetupPacket.bmRequestType & 0x60) != 0x20)
     {
@@ -385,7 +407,7 @@ void ProcessHIDRequest(void)
         RequestHandled = 1;
         outPtr = &HidProtocol;
         wCount = 1;
-	transferType=0;
+   transferType=0;
     }
 
     else if (bRequest == SET_PROTOCOL)
@@ -419,18 +441,24 @@ static void GetDescriptor(void)
                 RequestHandled = 1;
                 ROMoutPtr = (const uint8_t*)&ConfigurationDescriptor;
                 wCount = sizeof(ConfigurationDescriptor);
-		transferType=1;
+                transferType=1;
         }
         else if (descriptorType == STRING_DESCRIPTOR)
         {
                 RequestHandled = 1;
+                switch (descriptorIndex){
+                   case 1: ROMoutPtr=  StringDescriptor1; break;
+                   case 2: ROMoutPtr=  StringDescriptor2; break;
+                   default: ROMoutPtr= StringDescriptor0; break;
+                } /*
                 if(descriptorIndex >= StringDescriptorCount)
                     ROMoutPtr = (const uint8_t*)&StringDescriptor0;
                 else
                     ROMoutPtr = *(StringDescriptorPointers + descriptorIndex);
+                */
 
                 wCount = *ROMoutPtr;
-		transferType=1;
+                transferType=1;
         }
         else
         {   // Unknown Descriptor
@@ -481,7 +509,7 @@ static void GetStatus(void)
     {
         outPtr = (uint8_t *)&ControlTransferBuffer;
         wCount = 2;
-	transferType=0;
+   transferType=0;
     }
 }
 
@@ -536,10 +564,6 @@ void ProcessStandardRequest(void)
 {
     uint8_t request = SetupPacket.bRequest;
 
-    log_byte(SetupPacket.bRequest); // SUCCESS
-    //log_byte(request); // FAIL
-    //log_hex(SetupPacket.bRequest,FMT_HEX|FMT_SPACE); // SUCCESS
-    //log_hex(request,FMT_HEX|FMT_SPACE); //FAIL
 
     if((SetupPacket.bmRequestType & 0x60) != 0x00) {
         // Not a standard request - don't process here.  Class or Vendor
@@ -653,26 +677,27 @@ void InDataStage(void)
 
     // Move data to the USB output buffer from wherever it sits now.
     inPtr = (uint8_t *)&ControlTransferBuffer;
-	if(transferType==1) for(i=0;i<bufferSize;i++) *inPtr++ = *ROMoutPtr++;
-	else for(i=0;i<bufferSize;i++) *inPtr++ = *outPtr++;
+   if(transferType==1) for(i=0;i<bufferSize;i++) *inPtr++ = *ROMoutPtr++;
+   else for(i=0;i<bufferSize;i++) *inPtr++ = *outPtr++;
 }
 
 // Data stage for a Control Transfer that reads data from the host
 void OutDataStage(void)
 {
-    uint16_t i, bufferSize;
+    uint16_t bufferSize;
 
     bufferSize = ((0x03 & Interfaces[EP0Id].Output.Stat) << 8) | Interfaces[EP0Id].Output.Cnt;
 
     // Accumulate total number of bytes read
     wCount = wCount + bufferSize;
-
+/*
     outPtr = (uint8_t*)&ControlTransferBuffer;
 
     for (i=0;i<bufferSize;i++)
     {
         *inPtr++ = *outPtr++;
     }
+*/
 }
 
 // Process the Setup stage of a control transfer.  This code initializes the
@@ -680,6 +705,11 @@ void OutDataStage(void)
 // the transfer.
 void SetupStage(void)
 {
+
+    uint8_t requestType = (SetupPacket.bmRequestType & 0x60);
+    uint8_t recipient = (SetupPacket.bmRequestType & 0x1F);
+    uint8_t targetIndex = SetupPacket.wIndex0;
+
     // Note: Microchip says to turn off the UOWN bit on the IN direction as
     // soon as possible after detecting that a SETUP has been received.
     Interfaces[EP0Id].Input.Stat &= ~UOWN;
@@ -690,336 +720,394 @@ void SetupStage(void)
     RequestHandled = 0; // Default is that request hasn't been handled
     HIDPostProcess = 0; // Assume standard request until know otherwise
     wCount = 0;         // No bytes transferred
+    inPtr = (uint8_t*)&ControlTransferBuffer;
 
     // See if this is a standard (as definded in USB chapter 9) request
+
     ProcessStandardRequest();
-
-    // See if the HID class can do something with it.
-    ProcessHIDRequest();
-
-    // TBD: Add handlers for any other classes/interfaces in the device
-    ProcessCDCRequest();
+    if (recipient == 0x01) { // INTERFACE
+       if (targetIndex ==0 
+#ifdef INC_HID2
+|| targetIndex==1
+#endif
+       ) { // HID
+          ProcessHIDRequest(targetIndex);
+       } 
+#ifdef INC_CDC
+       else if (targetIndex == 2) {
+          ProcessCDCRequest(targetIndex);
+       }
+#endif
+    }
+/*
+    switch(requestType) {
+       case 0x00: // Standard Requests
+          ProcessStandardRequest();
+          break;
+       case 0x20: //  Class Specific
+          if (recipient == 0x01) { // INTERFACE
+             if (targetIndex ==0 || targetIndex==1) { // HID
+                ProcessHIDRequest(targetIndex);
+             } else if (targetIndex == 2) {
+                ProcessCDCRequest(targetIndex);
+             }
+          }
+          break;
+    }
+*/
 
     if (!RequestHandled)
     {
         // If this service wasn't handled then stall endpoint 0
         Interfaces[EP0Id].Output.Cnt = E0SZ;
-		Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
-		Interfaces[EP0Id].Output.Stat =  BSTALL;
-		Interfaces[EP0Id].Input.Stat =   BSTALL;
-		// Microchips warns to set this field last
-		Interfaces[EP0Id].Output.Stat |= UOWN;
-		Interfaces[EP0Id].Input.Stat  |= UOWN;
-	    }
-	    else if (SetupPacket.bmRequestType & 0x80) 
-	    {
-		// Device-to-host
-		if(SetupPacket.wLength < wCount)
-		    wCount = SetupPacket.wLength;
-		InDataStage();
-		CtrlTransferStage = DATA_IN_STAGE;
-		// Reset the out buffer descriptor for endpoint 0
-		Interfaces[EP0Id].Output.Cnt = E0SZ;
-		Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
-		Interfaces[EP0Id].Output.Stat = UOWN;
+        Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
+        Interfaces[EP0Id].Output.Stat =  BSTALL;
+        Interfaces[EP0Id].Input.Stat =   BSTALL;
+        // Microchips warns to set this field last
+        Interfaces[EP0Id].Output.Stat |= UOWN;
+        Interfaces[EP0Id].Input.Stat  |= UOWN;
+     }
+     else if (SetupPacket.bmRequestType & 0x80)
+     {
+        // Device-to-host
+        if(SetupPacket.wLength < wCount)
+            wCount = SetupPacket.wLength;
+        InDataStage();
+        CtrlTransferStage = DATA_IN_STAGE;
+        // Reset the out buffer descriptor for endpoint 0
+        Interfaces[EP0Id].Output.Cnt = E0SZ;
+        Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
+        Interfaces[EP0Id].Output.Stat =  DTS | DTSEN;
+        Interfaces[EP0Id].Output.Stat |= UOWN;
 
-		// Set the in buffer descriptor on endpoint 0 to send data
-		Interfaces[EP0Id].Input.ADDR = PTR16(&ControlTransferBuffer);
-		// Give to SIE, DATA1 packet, enable data toggle checks
-		Interfaces[EP0Id].Input.Stat =  DTS | DTSEN;
-		Interfaces[EP0Id].Input.Stat |= UOWN;
-	    }
-	    else
-	    {
-		// Host-to-device
-		CtrlTransferStage = DATA_OUT_STAGE;
+        // Set the in buffer descriptor on endpoint 0 to send data
+        Interfaces[EP0Id].Input.ADDR = PTR16(&ControlTransferBuffer);
+        // Give to SIE, DATA1 packet, enable data toggle checks
+        Interfaces[EP0Id].Input.Stat =  DTS | DTSEN;
+        Interfaces[EP0Id].Input.Stat |= UOWN;
+     }
+     else
+     {
+        if (SetupPacket.wLength == 0) {
+           // Host-to-device
+           CtrlTransferStage = STATUS_STAGE;
 
-		// Clear the input buffer descriptor
-		Interfaces[EP0Id].Input.Cnt = 0;
-		Interfaces[EP0Id].Input.Stat = DTS | DTSEN;
-		Interfaces[EP0Id].Input.Stat |= UOWN;
+           // Clear the input buffer descriptor
+           Interfaces[EP0Id].Input.Cnt = 0;
+           Interfaces[EP0Id].Input.Stat = DTS | DTSEN;
+           Interfaces[EP0Id].Input.Stat |= UOWN;
 
-		// Set the out buffer descriptor on endpoint 0 to receive data
-		Interfaces[EP0Id].Output.Cnt = E0SZ;
-		Interfaces[EP0Id].Output.ADDR = PTR16(&ControlTransferBuffer);
-		// Give to SIE, DATA1 packet, enable data toggle checks
-		Interfaces[EP0Id].Output.Stat  = DTS | DTSEN;
-		Interfaces[EP0Id].Output.Stat |= UOWN;
-	    }
+           // Set the out buffer descriptor on endpoint 0 to receive data
+           Interfaces[EP0Id].Output.Cnt = E0SZ;
+           Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
+           // Give to SIE, DATA1 packet, enable data toggle checks
+           Interfaces[EP0Id].Output.Stat = DTSEN;
+           Interfaces[EP0Id].Output.Stat |= UOWN;
+        } else {
+           // Host-to-device
+           CtrlTransferStage = DATA_OUT_STAGE;
 
-	    // Enable SIE token and packet processing
-	    UCONbits.PKTDIS = 0;
-	}
+           // Clear the input buffer descriptor
+           Interfaces[EP0Id].Input.Cnt = 0;
+           Interfaces[EP0Id].Input.Stat = DTS | DTSEN;
+           Interfaces[EP0Id].Input.Stat |= UOWN;
 
-	// Configures the buffer descriptor for endpoint 0 so that it is waiting for
-	// the status stage of a control transfer.
-	void WaitForSetupStage(void)
-	{
-	    CtrlTransferStage = SETUP_STAGE;
-	    Interfaces[EP0Id].Output.Cnt = E0SZ;
-	    Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
-	    Interfaces[EP0Id].Output.Stat = DTSEN; // Give to SIE, enable data toggle checks
-	    Interfaces[EP0Id].Output.Stat |= UOWN ;
-	    Interfaces[EP0Id].Input.Stat = 0x00;         // Give control to CPU
-	}
+           // Set the out buffer descriptor on endpoint 0 to receive data
+           Interfaces[EP0Id].Output.Cnt = E0SZ;
+           Interfaces[EP0Id].Output.ADDR = PTR16(&ControlTransferBuffer);
+           // Give to SIE, DATA1 packet, enable data toggle checks
+           Interfaces[EP0Id].Output.Stat  = DTS | DTSEN;
+           Interfaces[EP0Id].Output.Stat |= UOWN;
+        } 
 
-	// This is the starting point for processing a Control Transfer.  The code directly
-	// follows the sequence of transactions described in the USB spec chapter 5.  The
-	// only Control Pipe in this firmware is the Default Control Pipe (endpoint 0).
-	// Control messages that have a different destination will be discarded.
-	void ProcessControlTransfer(void)
-	{
-	    if (USTAT == 0) // Endpoint 0: OUT
-	    {
-		uint8_t PID = (Interfaces[EP0Id].Output.Stat & 0x3C) >> 2; // Pull PID from middle of BD0STAT
-		if (PID == 0x0D) {
-		    // SETUP PID - a transaction is starting
-		    SetupStage();
-		}
-		else if (CtrlTransferStage == DATA_OUT_STAGE)
-		{
-		    OutDataStage();
-		    if(Interfaces[EP0Id].Output.Stat & DTS) {
-			Interfaces[EP0Id].Output.Stat = DTSEN;
-			Interfaces[EP0Id].Output.Stat |= UOWN ;
-		    } else {
-			Interfaces[EP0Id].Output.Stat = DTS | DTSEN;
-			Interfaces[EP0Id].Output.Stat |= UOWN;
-		    }
-		}
-		else
-		{
-		    // Prepare for the Setup stage of a control transfer
-		    WaitForSetupStage();
-		}
-	    }
+     }
 
-	    else if(USTAT == 0x04) // Endpoint 0: IN
-	    {
-		if ((UADDR == 0) && (DeviceState == ADDRESS))
-		{
-		    // TBD: ensure that the new address matches the value of
-		    // "deviceAddress" (which came in through a SET_ADDRESS).
-		    UADDR = SetupPacket.wValue0;
-		    if(UADDR == 0)
-			// If we get a reset after a SET_ADDRESS, then we need
-			// to drop back to the Default state.
-			DeviceState = DEFAULT;
-		}
+     // Enable SIE token and packet processing
+     UCONbits.PKTDIS = 0;
+ }
 
-		if (CtrlTransferStage == DATA_IN_STAGE)
-		{
-		    // Start (or continue) transmitting data
-		    InDataStage();
+   // Configures the buffer descriptor for endpoint 0 so that it is waiting for
+   // the status stage of a control transfer.
+   void WaitForSetupStage(void)
+   {
+       CtrlTransferStage = SETUP_STAGE;
+       Interfaces[EP0Id].Output.Cnt = E0SZ;
+       Interfaces[EP0Id].Output.ADDR = PTR16(&SetupPacket);
+       Interfaces[EP0Id].Output.Stat = DTSEN; // Give to SIE, enable data toggle checks
+       Interfaces[EP0Id].Output.Stat |= UOWN ;
+       Interfaces[EP0Id].Input.Stat = 0x00;         // Give control to CPU
+   }
 
-		    // Turn control over to the SIE and toggle the data bit
-		    if(Interfaces[EP0Id].Input.Stat & DTS) {
-			Interfaces[EP0Id].Input.Stat = DTSEN;
-			Interfaces[EP0Id].Input.Stat |= UOWN;
-		    } else {
-			Interfaces[EP0Id].Input.Stat = DTS | DTSEN;
-			Interfaces[EP0Id].Input.Stat |= UOWN ;
-		    }
-		}
-		else
-		{
-		    // Prepare for the Setup stage of a control transfer
-		    WaitForSetupStage();
-		}
-	    }
-	    else
-	    {
-	    }
-	}
+   // This is the starting point for processing a Control Transfer.  The code directly
+   // follows the sequence of transactions described in the USB spec chapter 5.  The
+   // only Control Pipe in this firmware is the Default Control Pipe (endpoint 0).
+   // Control messages that have a different destination will be discarded.
+   void ProcessControlTransfer(void)
+   {
+       if (USTAT == 0) // Endpoint 0: OUT
+       {
+          uint8_t PID = (Interfaces[EP0Id].Output.Stat & 0x3C) >> 2; // Pull PID from middle of BD0STAT
+          if (PID == 0x0D) {
+              // SETUP PID - a transaction is starting
+              SetupStage();
+          }
+          else if (CtrlTransferStage == DATA_OUT_STAGE)
+          {
+              OutDataStage();
+              //if (wCount < SetupPacket.wLength) {
+              {
+                 if(Interfaces[EP0Id].Output.Stat & DTS) {
+                    Interfaces[EP0Id].Output.Stat = DTSEN;
+                    Interfaces[EP0Id].Output.Stat |= UOWN ;
+                 } else {
+                    Interfaces[EP0Id].Output.Stat = DTS | DTSEN;
+                    Interfaces[EP0Id].Output.Stat |= UOWN;
+                 }
+              }
+          }
+          else
+          {
+              // Prepare for the Setup stage of a control transfer
+              WaitForSetupStage();
+          }
+       }
 
-	void ResetPPBuffers(void)
-	{
-	    do
-	    {
-		UCONbits.PPBRST = 1;
-		UCONbits.PPBRST = 0;
-	    } while(0);
-	}
+       else if(USTAT == 0x04) // Endpoint 0: IN
+       {
+          if ((UADDR == 0) && (DeviceState == ADDRESS))
+          {
+              // TBD: ensure that the new address matches the value of
+              // "deviceAddress" (which came in through a SET_ADDRESS).
+              UADDR = SetupPacket.wValue0;
+              if(UADDR == 0)
+                 // If we get a reset after a SET_ADDRESS, then we need
+                 // to drop back to the Default state.
+                 DeviceState = DEFAULT;
+          }
 
-	void InitializeUSB(void)
-	{
-	    UCFG = 0x14; // Enable pullup resistors; full speed mode; No PingPong
-	    DeviceState = DETACHED;
-	    RemoteWakeup = 0x00;
-	    CurrentConfiguration = 0x00;
-	    UADDR = 0; // Reset USB Address
-	    UEIR = 0; // Clear all USB Error Interrupt Flags
-	    ResetPPBuffers();
-	    UCONbits.PKTDIS = 0;// Enable Packet Transfers
+          if (CtrlTransferStage == DATA_IN_STAGE) {
+              // Start (or continue) transmitting data
+              InDataStage();
+ 
+              // Turn control over to the SIE and toggle the data bit
+              if(Interfaces[EP0Id].Input.Stat & DTS) {
+                 Interfaces[EP0Id].Input.Stat = DTSEN;
+                 Interfaces[EP0Id].Input.Stat |= UOWN;
+              } else {
+                 Interfaces[EP0Id].Input.Stat = DTS | DTSEN;
+                 Interfaces[EP0Id].Input.Stat |= UOWN ;
+              }
+          }
+          else if (CtrlTransferStage == STATUS_STAGE) {
+              // BD0OUT is already armed for the next SETUP packet from SetupStage()!
+              CtrlTransferStage = SETUP_STAGE;
+              Interfaces[EP0Id].Input.Stat = 0x00;
+          } else {
+             if (HIDPostProcess) {
+                HIDPostProcess = 0;
+                ProcessIncommingData(ControlTransferBuffer[0]);
+              }
+              // Prepare for the Setup stage of a control transfer
+              WaitForSetupStage();
+          }
+       }
+       else
+       {
+       }
+   }
 
-	// LabRat - this is weird .. why is it wrong? - investigate/debug
-	  // ?? Value in the array seems to be wrong ??
-	  //  Buffers[1].Buffer = (uint8_t * ) &HIDRxBuffer;
-	}
+   void ResetPPBuffers(void)
+   {
+       do
+       {
+          UCONbits.PPBRST = 1;
+          UCONbits.PPBRST = 0;
+       } while(0);
+   }
 
-	void EnableUSBModule(void)
-	{
-	    // TBD: Check for voltage coming from the USB cable and use that
-	    // as an indication we are attached.
-	    if(UCONbits.USBEN == 0)
-	    {
-		UCON = 0;
-		UIE = 0;
-		UCONbits.USBEN = 1;
-		DeviceState = ATTACHED;
-		
-	    }
+   void InitializeUSB(void)
+   {
+       UCFG = 0x14; // Enable pullup resistors; full speed mode; No PingPong
+       UCFG = 0x14; // Enable pullup resistors; full speed mode; No PingPong
+       DeviceState = DETACHED;
+       RemoteWakeup = 0x00;
+       CurrentConfiguration = 0x00;
+       UADDR = 0; // Reset USB Address
+       UEIR = 0; // Clear all USB Error Interrupt Flags
+       ResetPPBuffers();
+       UCONbits.PKTDIS = 0;// Enable Packet Transfers
 
-	    while (UCONbits.SE0); //Single Ended Zero Is Set - Busywait for initial power-up
+   // LabRat - this is weird .. why is it wrong? - investigate/debug
+     // ?? Value in the array seems to be wrong ??
+     //  Buffers[1].Buffer = (uint8_t * ) &HIDRxBuffer;
+   }
 
-	    // If we are attached and no single-ended zero is detected, then
-	    // we can move to the Powered state.
-	    UIR = 0;
-	    UIE = 0;
-	    UIEbits.URSTIE = 1; //USB Reset Interrupt Enable bit
-	    UIEbits.IDLEIE = 1; //Idle Detect Interrupt Enable bit
-	    DeviceState = POWERED;
-	}
+   void EnableUSBModule(void)
+   {
+       // TBD: Check for voltage coming from the USB cable and use that
+       // as an indication we are attached.
+       if(UCONbits.USBEN == 0)
+       {
+          UCON = 0;
+          UIE = 0;
+          UCONbits.USBEN = 1;
+          DeviceState = ATTACHED;
+       }
 
-	// Unsuspend the device
-	void UnSuspend(void)
-	{
+       while (UCONbits.SE0); //Single Ended Zero Is Set - Busywait for initial power-up
 
-	    UCONbits.SUSPND = 0;   // Bring USB module out of power conserve
-	    UIEbits.ACTVIE = 0;
-	    UIR &= 0xFB;
-	}
+       // If we are attached and no single-ended zero is detected, then
+       // we can move to the Powered state.
+       UIR = 0;
+       UIE = 0;
+       UIEbits.URSTIE = 1; //USB Reset Interrupt Enable bit
+       UIEbits.IDLEIE = 1; //Idle Detect Interrupt Enable bit
+       DeviceState = POWERED;
+   }
 
-	// Full speed devices get a Start Of Frame (SOF) packet every 1 millisecond.
-	// Nothing is currently done with this interrupt (it is simply masked out).
-	void StartOfFrame(void)
-	{
-	    // TBD: Add a callback routine to do something
-	    UIRbits.SOFIF = 0;
-	}
+   // Unsuspend the device
+   void UnSuspend(void)
+   {
 
-	// This routine is called in response to the code stalling an endpoint.
-	void Stall(void)
-	{
-	    if(UEP0bits.EPSTALL == 1)
-	    {
-		// Prepare for the Setup stage of a control transfer
-		WaitForSetupStage();
-		UEP0bits.EPSTALL = 0;
-	    }
-	    UIRbits.STALLIF = 0;
-	}
+       UCONbits.SUSPND = 0;   // Bring USB module out of power conserve
+       UIEbits.ACTVIE = 0;
+       UIR &= 0xFB;
+   }
 
-	// Suspend all processing until we detect activity on the USB bus
-	void Suspend(void)
-	{
-	    UIEbits.ACTVIE = 1;                     // Enable bus activity interrupt
-	    UIR &= 0xEF;
-	    UCONbits.SUSPND = 1;                   // Put USB module in power conserve
-	}
+   // Full speed devices get a Start Of Frame (SOF) packet every 1 millisecond.
+   // Nothing is currently done with this interrupt (it is simply masked out).
+   void StartOfFrame(void)
+   {
+       // TBD: Add a callback routine to do something
+       UIRbits.SOFIF = 0;
+   }
 
-	void BusReset()
-	{
-	    UEIR  = 0x00; // Clear any pending Error Interrupts
-	    UIR   = 0x00; // Clear any pending USB interrupts
-	    UEIE  = 0x9f; // Enable ALL Error Interrupt
-	    UIE   = 0x7b; // Enable all *BUT* the ACTVIE interrupts
-	    UADDR = 0x00;
+   // This routine is called in response to the code stalling an endpoint.
+   void Stall(void)
+   {
+/*
+       if(UEP0bits.EPSTALL == 1)
+       {
+*/
+          // Prepare for the Setup stage of a control transfer
+          UEP0bits.EPSTALL = 0;
+          WaitForSetupStage();
+/*
+       }
+*/
+       UIRbits.STALLIF = 0;
+   }
 
-	    // Set endpoint 0 as a control pipe
-	    UEP0 = 0x16;
+   // Suspend all processing until we detect activity on the USB bus
+   void Suspend(void)
+   {
+       UIEbits.ACTVIE = 1;                     // Enable bus activity interrupt
+       UIR &= 0xEF;
+       UCONbits.SUSPND = 1;                   // Put USB module in power conserve
+   }
 
-	    // Flush any pending transactions
-	    while (UIRbits.TRNIF == 1) UIRbits.TRNIF = 0;
+   void BusReset()
+   {
+       UEIR  = 0x00; // Clear any pending Error Interrupts
+       UIR   = 0x00; // Clear any pending USB interrupts
+       UEIE  = 0x9f; // Enable ALL Error Interrupt
+       UIE   = 0x7b; // Enable all *BUT* the ACTVIE interrupts
+       UADDR = 0x00;
 
-	    // Enable packet processing
-	    UCONbits.PKTDIS = 0;
+       // Set endpoint 0 as a control pipe
+       UEP0 = 0x16;
 
-	    // Prepare for the Setup stage of a control transfer
-	    WaitForSetupStage();
+       // Flush any pending transactions
+       while (UIRbits.TRNIF == 1) UIRbits.TRNIF = 0;
 
-	    RemoteWakeup = 0;         // Remote wakeup is off by default
-	    SelfPowered = 0;          // Self powered is off by default
-	    CurrentConfiguration = 0; // Clear active configuration
-	    DeviceState = DEFAULT;
-	}
+       // Enable packet processing
+       UCONbits.PKTDIS = 0;
 
-	// Main entry point for USB tasks.  Checks interrupts, then checks for transactions.
-	void ProcessUSBTransactions(void)
-	{
-	    // See if the device is connected yet.
-	    if(DeviceState == DETACHED)
-	    {
-		UIR = 0; // Clear All Interrupt Flags
-		UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
-		return;
-	    }
+       // Prepare for the Setup stage of a control transfer
+       WaitForSetupStage();
 
-	    // If the USB became active then wake up from suspend
-	    if(UIRbits.ACTVIF && UIEbits.ACTVIE)
-	    {
-		UnSuspend();
-		ClearUsbInterruptFlag(USB_RESUM);
-	    }
+       RemoteWakeup = 0;         // Remote wakeup is off by default
+       SelfPowered = 0;          // Self powered is off by default
+       CurrentConfiguration = 0; // Clear active configuration
+       DeviceState = DEFAULT;
+   }
 
-	    // If we are supposed to be suspended, then don't try performing any
-	    // processing.
-	    if(UCONbits.SUSPND == 1)
-	    {
-		UIR = 0; // Clear All Interrupt Flags
-		UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
-		return;
-	    }
+   // Main entry point for USB tasks.  Checks interrupts, then checks for transactions.
+   void ProcessUSBTransactions(void)
+   {
+       // See if the device is connected yet.
+       if(DeviceState == DETACHED)
+       {
+          UIR = 0; // Clear All Interrupt Flags
+          UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
+          return;
+       }
 
-	     // Process a bus reset
-	    if (UIRbits.URSTIF && UIEbits.URSTIE)
-	    {
-		BusReset();
-		ClearUsbInterruptFlag(USB_URST);
-	    }
+       // If the USB became active then wake up from suspend
+       if(UIRbits.ACTVIF && UIEbits.ACTVIE)
+       {
+          UnSuspend();
+          ClearUsbInterruptFlag(USB_RESUM);
+       }
 
-	    if (UIRbits.IDLEIF && UIEbits.IDLEIE)
-	    {
-		// No bus activity for a while - suspend the firmware
-		Suspend();
-		ClearUsbInterruptFlag(USB_IDLE);
-	    }
+       // If we are supposed to be suspended, then don't try performing any
+       // processing.
+       if(UCONbits.SUSPND == 1)
+       {
+          UIR = 0; // Clear All Interrupt Flags
+          UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
+          return;
+       }
 
-	    if (UIRbits.SOFIF && UIEbits.SOFIE)
-	    {
-		StartOfFrame();
-		ClearUsbInterruptFlag(USB_SOF);
-	    }
+        // Process a bus reset
+       if (UIRbits.URSTIF && UIEbits.URSTIE)
+       {
+          BusReset();
+          ClearUsbInterruptFlag(USB_URST);
+       }
 
-	    if (UIRbits.STALLIF && UIEbits.STALLIE)
-	    {
-		Stall();
-		ClearUsbInterruptFlag(USB_STALL);
-	    }
+       if (UIRbits.IDLEIF && UIEbits.IDLEIE)
+       {
+          // No bus activity for a while - suspend the firmware
+          Suspend();
+          ClearUsbInterruptFlag(USB_IDLE);
+       }
 
-	    if (UIRbits.UERRIF && UIEbits.UERRIE)
-	    {
-		// TBD: See where the error came from.
-		// Clear errors
-		UIRbits.UERRIF = 0;
-		UEIR = 0 ; //     Clear All Usb Error Interrupt Flags
-		ClearUsbInterruptFlag(USB_UERR);
-	    }
+       if (UIRbits.SOFIF && UIEbits.SOFIE)
+       {
+          StartOfFrame();
+          ClearUsbInterruptFlag(USB_SOF);
+       }
 
-	    // Unless we have been reset by the host, no need to keep processing
-	    if (DeviceState < DEFAULT)
-	    {
-		UIR = 0; // Clear All Interrupt Flags
-		UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
-		return;
-	    }
+       if (UIRbits.STALLIF && UIEbits.STALLIE)
+       {
+          Stall();
+          ClearUsbInterruptFlag(USB_STALL);
+       }
 
-	    // A transaction has finished.  Try default processing on endpoint 0.
-	    if(UIRbits.TRNIF && UIEbits.TRNIE)
-	    {
-		ProcessControlTransfer();
-		ClearUsbInterruptFlag(USB_TRN);
-	    }
-	    UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
-	}
+       if (UIRbits.UERRIF && UIEbits.UERRIE)
+       {
+          // TBD: See where the error came from.
+          // Clear errors
+          UIRbits.UERRIF = 0;
+          UEIR = 0 ; //     Clear All Usb Error Interrupt Flags
+          ClearUsbInterruptFlag(USB_UERR);
+       }
+
+       // Unless we have been reset by the host, no need to keep processing
+       if (DeviceState < DEFAULT)
+       {
+          UIR = 0; // Clear All Interrupt Flags
+          UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
+          return;
+       }
+
+       // A transaction has finished.  Try default processing on endpoint 0.
+       while(UIRbits.TRNIF && UIEbits.TRNIE)
+       {
+          ProcessControlTransfer();
+          ClearUsbInterruptFlag(USB_TRN);
+       }
+       UsbInterrupt = 0; // Clear Global Usb Interrupt Flag
+   }
 

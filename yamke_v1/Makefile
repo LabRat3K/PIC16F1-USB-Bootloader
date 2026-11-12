@@ -12,7 +12,7 @@
 OUT = yamke_v1
 
 # Source files to compile
-SRC = main.c usb.c log.c
+SRC = main.c usb.c
 
 # Assembly files to assemble
 ASM = crt_bootloader_512.S

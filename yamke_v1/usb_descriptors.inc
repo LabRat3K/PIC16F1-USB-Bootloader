@@ -23,6 +23,8 @@ __at (0x20C0) volatile uint8_t hid1_out_buf[HidReportByteCount];
 __at (0x20C8) volatile uint8_t hid1_in_buf[HidReportByteCount];
 __at (0x20D0) volatile uint8_t hid2_out_buf[HidReportByteCount];
 __at (0x20D8) volatile uint8_t hid2_in_buf[HidReportByteCount];
+__at (0x20E0) volatile uint8_t cdc_comm_out_buf[8];
+__at (0x20E8) volatile uint8_t cdc_comm_in_buf[8];
 __at (0x2100) volatile uint8_t cdc_out_buf[CdcReportByteCount];
 __at (0x2140) volatile uint8_t cdc_in_buf[CdcReportByteCount];
 /*
@@ -40,8 +42,12 @@ BufferInfo Buffers[(InterfaceCount * 2)] =
     { HidReportByteCount, (uint8_t*)&hid1_out_buf},
     { HidReportByteCount, (uint8_t*)&hid2_in_buf },
     { HidReportByteCount, (uint8_t*)&hid2_out_buf},
+#ifdef INC_CDC
+    { 8, (uint8_t*)&cdc_comm_in_buf},
+    { 8, (uint8_t*)&cdc_comm_out_buf},
     { CdcReportByteCount, (uint8_t*)&cdc_in_buf },
     { CdcReportByteCount, (uint8_t*)&cdc_out_buf}
+#endif
 };
 
 
@@ -170,21 +176,22 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x08, 0x0B, 0x02, 0x02, 0x02, 0x02, 0x01, 0x00,
 
     // ========================================
-    // INTERFACE 2: CDC Data Out/In (0x03/0x83)
+    // INTERFACE 2: CDC Communication In (0x84)
     // ========================================
-    0x09, 0x04, 0x02, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00,
-    0x07, 0x05, 0x03, 0x02, 0x40, 0x00, 0x00,             // OUT Endpoint 3
-    0x07, 0x05, 0x83, 0x02, 0x40, 0x00, 0x00,             // IN Endpoint 3
+    0x09, 0x04, 0x02, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00,
+    0x05, 0x24, 0x00, 0x10, 0x01,                         // Header Functional
+    0x05, 0x24, 0x01, 0x00, 0x03,                         // Call Management
+    0x04, 0x24, 0x02, 0x02,                               // ACM Functional
+    0x05, 0x24, 0x06, 0x02, 0x03,                         // Union Functional
+    0x07, 0x05, 0x83, 0x03, 0x08, 0x00, 0xFF,             // Notification EP 3 IN
 
     // ========================================
-    // INTERFACE 3: CDC Communication In (0x84)
+    // INTERFACE 3: CDC Data Out/In (0x03/0x83)
     // ========================================
-    0x09, 0x04, 0x03, 0x00, 0x01, 0x02, 0x02, 0x01, 0x00,
-    0x05, 0x24, 0x00, 0x10, 0x01,                         // Header Functional
-    0x05, 0x24, 0x01, 0x00, 0x02,                         // Call Management
-    0x04, 0x24, 0x02, 0x02,                               // ACM Functional
-    0x05, 0x24, 0x06, 0x03, 0x02,                         // Union Functional
-    0x07, 0x05, 0x84, 0x03, 0x08, 0x00, 0xFF              // Notification EP
+    0x09, 0x04, 0x03, 0x00, 0x02, 0x0A, 0x00, 0x00, 0x00,
+    0x07, 0x05, 0x04, 0x02, 0x40, 0x00, 0x00,            // OUT Endpoint 4
+    0x07, 0x05, 0x84, 0x02, 0x40, 0x00, 0x00             // IN Endpoint 4
+
     }
 #endif
 };
@@ -225,7 +232,7 @@ __at (0x1E00+DeviceDescriptorSize + CONFIG_HEADER_SIZE+ HidDescriptorSize) const
     0xc0                           // END_COLLECTION
 };
 
-
+#ifdef OLD_CODE
 const struct{uint8_t bLength;uint8_t bDscType;uint16_t string[1];}StringDescriptor0={sizeof(StringDescriptor0),0x03,{0x0409}};
 
 const struct{uint8_t bLength;uint8_t bDscType;uint16_t string[11];}StringDescriptor1={sizeof(StringDescriptor1),0x03,
@@ -241,5 +248,24 @@ const uint8_t *const StringDescriptorPointers[StringDescriptorCount]=
     (const uint8_t *const)&StringDescriptor1,
     (const uint8_t *const)&StringDescriptor2
 };
+#else 
+// Language code string descriptor (4 bytes)
+const uint8_t StringDescriptor0[] = {
+    0x04, 0x03, 0x09, 0x04
+};
+
+// Manufacturer string descriptor: "JSG Product" (2 + 11*2 = 24 bytes = 0x18)
+const uint8_t StringDescriptor1[] = {
+    24, 0x03,
+    'J', 0, 'S', 0, 'G', 0, ' ', 0, 'P', 0, 'r', 0, 'o', 0, 'd', 0, 'u', 0, 'c', 0, 't', 0
+};
+
+// Product string descriptor: "Yet Another MameKBD" (2 + 19*2 = 40 bytes = 0x28)
+const uint8_t StringDescriptor2[] = {
+    40, 0x03,
+    'Y', 0, 'e', 0, 't', 0, ' ', 0, 'A', 0, 'n', 0, 'o', 0, 't', 0, 'h', 0, 'e', 0, 'r', 0, ' ', 0,
+    'M', 0, 'a', 0, 'm', 0, 'e', 0, 'K', 0, 'B', 0, 'D', 0
+};
+#endif
 
 #endif	/* USBDESCRIPTORS_INC */

@@ -20,10 +20,8 @@ typedef unsigned short uint16_t;
 #define ReleaseNo   0x0001
 
 // Definitions
-#define InterfaceCount          0x04 // Four - two HID Keyboard, CDC Commns, and CDC Data
 #define StringDescriptorCount   0x03 // Three string descriptors - See Bottom of this file
 #define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
-#define HidDescriptorSize       0x80 // Size Of HID Descriptor
 // HID
 #define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc.
 #define CdcReportByteCount      0x40 
@@ -31,7 +29,7 @@ typedef unsigned short uint16_t;
 #define EP0Id   0x00
 #define P1HidNo 0x01            // Player1 HID Endpoint Index
 #define P2HidNo 0x02            // Player2 HID Endpoint Index
-#define CdcNo   0x03            // Serial EndPoint
+#define CdcNo   0x04            // Serial EndPoint (Bulk)
 
 
 // Strings
@@ -71,6 +69,8 @@ extern __at (0x1E00) const uint8_t DeviceDescriptor[];
 #endif
 
 #define HID1_CONFIG_LENGTH (32)
+#define HidDescriptorSize  (HID1_CONFIG_LENGTH + HID2_CONFIG_LENGTH + CDC_CONFIG_LENGTH) // Size Of HID Descriptor
+#define InterfaceCount     (1+NUM_HID2_INTF+NUM_CDC_INTF)
 
 typedef struct _configStruct
 {
