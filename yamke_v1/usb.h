@@ -62,7 +62,7 @@ typedef struct _BufferInfo
 
 // Global Variables
 extern volatile uint8_t DeviceState;    // Visible device states (from USB 2.0, chap 9.1.1)
-
+extern uint8_t SerialStringDesc[20];
 // USB Functions
 extern void ProcessIncommingData(uint8_t led);
 void InitializeUSB(void);
@@ -74,6 +74,6 @@ uint8_t CDCSend(uint8_t InterfaceNo,uint8_t count);
 void ProcessUSBTransactions(void);
 void ReArmInterface(uint8_t InterfaceNo);
 uint8_t IsUsbDataAvailable(uint8_t InterfaceNo);
-uint8_t* GetEpTxBuffer(uint8_t InterfaceNo);
-uint8_t* GetEpRxBuffer(uint8_t InterfaceNo);
+uint8_t IsUsbTxReady(uint8_t InterfaceNo);
+
 #endif	/* USB_H */

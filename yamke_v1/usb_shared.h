@@ -8,8 +8,7 @@
 #ifndef USBSHARED_H
 #define	USBSHARED_H
 
-//#define INC_CDC
-#define INC_HID2
+#define INC_CDC
 
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
@@ -20,7 +19,7 @@ typedef unsigned short uint16_t;
 #define ReleaseNo   0x0001
 
 // Definitions
-#define StringDescriptorCount   0x03 // Three string descriptors - See Bottom of this file
+#define StringDescriptorCount   0x04 // Three string descriptors - See Bottom of this file
 #define Endpoint0BufferSize     0x08 // Endpoint 0 Buffer Size
 // HID
 #define HidReportByteCount      0x08 // Hid Report Size, also size of Buffers etc.
@@ -35,7 +34,7 @@ typedef unsigned short uint16_t;
 // Strings
 #define SMAN 0x01   // Manufacturer Name String Index
 #define SPRD 0x02   // Product Name String Index
-#define SSER 0x00   // Serial Number String Index
+#define SSER 0x03   // Serial Number String Index
 #define SCON 0x00   // Configuration String Index
 
 #define CONFIG_HEADER_SIZE      0x09
@@ -60,17 +59,11 @@ extern __at (0x1E00) const uint8_t DeviceDescriptor[];
    #define NUM_CDC_INTF (0)
 #endif
 
-#ifdef INC_HID2
-   #define HID2_CONFIG_LENGTH (25)
-   #define NUM_HID2_INTF (1)
-#else
-   #define HID2_CONFIG_LENGTH (0)
-   #define NUM_HID2_INTF (0)
-#endif
+#define HID2_CONFIG_LENGTH (25)
 
 #define HID1_CONFIG_LENGTH (32)
 #define HidDescriptorSize  (HID1_CONFIG_LENGTH + HID2_CONFIG_LENGTH + CDC_CONFIG_LENGTH) // Size Of HID Descriptor
-#define InterfaceCount     (1+NUM_HID2_INTF+NUM_CDC_INTF)
+#define InterfaceCount     (2+NUM_CDC_INTF)
 
 typedef struct _configStruct
 {

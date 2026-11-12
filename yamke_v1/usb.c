@@ -170,8 +170,8 @@ uint8_t *inPtr;            // Data from the host
 uint8_t transferType;   // 0=ram 1=rom
 uint16_t wCount;            // Number of bytes of data
 
-volatile __data __at (0x38) setupPacketStruct SetupPacket;
-volatile __data __at (0x48) uint8_t ControlTransferBuffer[E0SZ];
+volatile __data __at (0x48) setupPacketStruct SetupPacket;
+volatile __data __at (0x58) uint8_t ControlTransferBuffer[E0SZ];
 
 #ifdef INC_CDC
 // Default 9600 baud, 1 stop bit, No parity, 8 data bits (0x00002580 = 9600)
@@ -191,6 +191,13 @@ volatile __data __at (0x20) Interface Interfaces[InterfaceCount + 1];
 //__at (0x2000) volatile Interface Interfaces[InterfaceCount + 1];
 // ... The hours I've waisted before I found out... :(
 
+// Runtime serial number string descriptor (18 bytes: len=18, type=0x03, 8 UTF-16LE chars)
+uint8_t SerialStringDesc[20] = {
+    20, 0x03,
+    'Y', 0, 'A', 0, 'M', 0, 'K', 0, 'E', 0, '0', 0, '0', 0, '0', 0, '1', 0
+};
+
+
 
 /***********************/
 /* Implementation      */
@@ -204,6 +211,13 @@ uint8_t IsUsbDataAvailable(uint8_t InterfaceNo)
     }
     return 0;
 }
+
+uint8_t IsUsbTxReady(uint8_t InterfaceNo)
+{
+    if (InterfaceNo > InterfaceCount) return 0;
+    return !(Interfaces[InterfaceNo].Input.Stat & UOWN);
+}
+
 
 void ReArmInterface(uint8_t InterfaceNo)
 {
@@ -225,16 +239,6 @@ void ReArmInterface(uint8_t InterfaceNo)
     }
 }
 
-
-uint8_t* GetEpTxBuffer(uint8_t InterfaceNo) {
-   InterfaceNo--;
-   return Buffers[InterfaceNo*2].Buffer;
-}
-
-uint8_t* GetEpRxBuffer(uint8_t InterfaceNo) {
-   InterfaceNo--;
-   return Buffers[InterfaceNo*2+1].Buffer;
-}
 
 #ifdef INC_CDC
 uint8_t CDCSend(uint8_t InterfaceNo, uint8_t count)
@@ -262,7 +266,8 @@ uint8_t HIDSend(uint8_t InterfaceNo)
     if (Interfaces[InterfaceNo].Input.Stat & UOWN) return 0;
 
     // Toggle the data bit and give control to the SIE
-    Interfaces[InterfaceNo].Input.Cnt =  Buffers[(InterfaceNo-1) * 2].Size;
+    //Interfaces[InterfaceNo].Input.Cnt =  HidReportByteCount;
+    Interfaces[InterfaceNo].Input.Cnt =  Buffers[(InterfaceNo-1)*2].Size;
 
     if (Interfaces[InterfaceNo].Input.Stat & DTS) {
         Interfaces[InterfaceNo].Input.Stat = DTSEN;
@@ -283,7 +288,7 @@ void HIDInitEndpoints(void)
     for (i = 0 ; i < InterfaceCount; i++)
     {
         // Turn on both in and out for this endpoint
-        EndpointFlags[i] = (i==3) ? 0x1A : 0x1E;
+        EndpointFlags[i] = (i==1 || i==2) ? 0x1A : 0x1E;
         Interfaces[i + 1].Output.Cnt = Buffers[(i * 2) + 1].Size;
 
         Interfaces[i + 1].Output.ADDR = PTR16(Buffers[(i * 2) + 1].Buffer);
@@ -347,12 +352,10 @@ void ProcessHIDRequest(uint8_t interfaceNum)
                ROMoutPtr = (const uint8_t*)&ConfigurationDescriptor.HID1Descriptor;
                wCount = sizeof(ConfigurationDescriptor.HID1Descriptor);
             } 
-#ifdef INC_HID2
             else {
                ROMoutPtr = (const uint8_t*)&ConfigurationDescriptor.HID2Descriptor;
                wCount = sizeof(ConfigurationDescriptor.HID2Descriptor);
             }
-#endif
             transferType=1;
         }
         else if (descriptorType == REPORT_DESCRIPTOR)
@@ -446,19 +449,19 @@ static void GetDescriptor(void)
         else if (descriptorType == STRING_DESCRIPTOR)
         {
                 RequestHandled = 1;
-                switch (descriptorIndex){
-                   case 1: ROMoutPtr=  StringDescriptor1; break;
-                   case 2: ROMoutPtr=  StringDescriptor2; break;
-                   default: ROMoutPtr= StringDescriptor0; break;
-                } /*
-                if(descriptorIndex >= StringDescriptorCount)
-                    ROMoutPtr = (const uint8_t*)&StringDescriptor0;
-                else
-                    ROMoutPtr = *(StringDescriptorPointers + descriptorIndex);
-                */
-
-                wCount = *ROMoutPtr;
-                transferType=1;
+                if (descriptorIndex == 3) {
+                   outPtr = SerialStringDesc;
+                   wCount = SerialStringDesc[0];
+                   transferType = 0;
+                } else {
+                   switch (descriptorIndex){
+                      case 1: ROMoutPtr=  StringDescriptor1; break;
+                      case 2: ROMoutPtr=  StringDescriptor2; break;
+                      default: ROMoutPtr= StringDescriptor0; break;
+                   } 
+                   wCount = *ROMoutPtr;
+                   transferType=1;
+                }
         }
         else
         {   // Unknown Descriptor
@@ -726,11 +729,7 @@ void SetupStage(void)
 
     ProcessStandardRequest();
     if (recipient == 0x01) { // INTERFACE
-       if (targetIndex ==0 
-#ifdef INC_HID2
-|| targetIndex==1
-#endif
-       ) { // HID
+       if (targetIndex ==0 || targetIndex==1) { // HID
           ProcessHIDRequest(targetIndex);
        } 
 #ifdef INC_CDC
@@ -907,6 +906,12 @@ void SetupStage(void)
                 HIDPostProcess = 0;
                 ProcessIncommingData(ControlTransferBuffer[0]);
               }
+              #ifdef INC_CDC
+              else if ((SetupPacket.bmRequestType == 0x21) && (SetupPacket.bRequest == 0x20)) {
+                 uint8_t k;
+                 for (k = 0; k < 7; k++) LineCoding[k] = ControlTransferBuffer[k];
+              }
+              #endif
               // Prepare for the Setup stage of a control transfer
               WaitForSetupStage();
           }

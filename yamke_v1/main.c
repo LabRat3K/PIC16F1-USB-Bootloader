@@ -3,6 +3,10 @@
  * Author: LabRat
  *
  * LabRat's MAME encoder
+ * 12 Keyboard Inputs all with EXTERNAL pull-up to 5v
+ * RA3 has EXTERNAL pull-up and is configured as a digital INPUT in the bootloader
+ *
+ *
 PORTA:
    A3 - RESET SW
    A4 - J1 RIGHT
@@ -29,11 +33,10 @@ Player::Port mapping
 P1:0x0,0x0,A4,C5,C4,C3,A5,C6
 P2:0x0,0x0,B7,B6,B5,B4,C7,C2
 
-LEDMAP: C0,C1
+LEDMAP: C0,C1 are outputs to toggle MM3906 transistors
  */
 
-#define USB_ENABLED
-#define HID_LEDS
+//#define HID_LEDS
 
 #include "usb.h"
 #include <pic14regs.h>
@@ -71,14 +74,22 @@ LEDMAP: C0,C1
 // Global variables tracking final debounced player switch states
 volatile uint8_t db_PlayerA = 0;
 volatile uint8_t db_PlayerB = 0;
+extern volatile uint8_t hid1_out_buf[];
+extern volatile uint8_t hid1_in_buf[];
+extern volatile uint8_t hid2_out_buf[];
+extern volatile uint8_t hid2_in_buf[];
+extern volatile uint8_t cdc_comm_out_buf[];
+extern volatile uint8_t cdc_comm_in_buf[];
+extern volatile uint8_t cdc_out_buf[];
+extern volatile uint8_t cdc_in_buf[];
 
 // Internal state tracking for the bitwise filter
-static uint8_t last_PlayerA = 0;
-static uint8_t last_PlayerB = 0;
+static uint8_t last_PlayerA = 0x00;
+static uint8_t last_PlayerB = 0x00;
 
 // Tx Cache of switch states
-static uint8_t cachePlayerA = 0;
-static uint8_t cachePlayerB = 0;
+static uint8_t cachePlayerA = 0x00;
+static uint8_t cachePlayerB = 0x00;
 
 // Note: Player Index is EVEN numbered, with key modifier = IDX+1
 // Theses denote the profile associated with each player (0,2,4,6,8)
@@ -91,11 +102,9 @@ APP_CONFIG(0 /*USB_BUS_POWERED*/, 20 );
 // Interrupt
 void app_interrupt( void )
 {
- #ifdef USB_ENABLED
     if (UsbInterrupt) {
        ProcessUSBTransactions();
     }
- #endif
 
     // ------- GPIO POLLING ON TIMER2 -----
     // Check Timer2 Interrupt Flag
@@ -107,7 +116,6 @@ void app_interrupt( void )
 
         // --- Process PLAYER1 ---
         //P1:0x0,0x0,A4,C5,C4,C3,A5,C6
-        //current = (PORTAbits.RA4<<5) | ((PORTC&0x38)>>1) | (PORTAbits.RA5<<1) | PORTCbits.RC6;
         current = (~((PORTAbits.RA4<<5) | ((PORTC&0x38)>>1) | (PORTAbits.RA5<<1) | PORTCbits.RC6))&0x3F;
         stable_mask = ~(current ^ last_PlayerA); // Bits are 1 if matching previous tick
         last_PlayerA = current;
@@ -115,12 +123,85 @@ void app_interrupt( void )
 
         // --- Process PLAYER2 ---
         //P2:0x0,0x0,B7,B6,B5,B4,C7,C2
-        current = (~((PORTB&0xF0)>>2 | PORTCbits.RC7<<1 | PORTCbits.RC2))&0x3F;
+        current = (~(((PORTB&0xF0)>>2) | (PORTCbits.RC7<<1) | PORTCbits.RC2))&0x3F;
         stable_mask = ~(current ^ last_PlayerB);
         last_PlayerB = current;
         db_PlayerB = (db_PlayerB & ~stable_mask) | (current & stable_mask);
     }
 }
+
+#define HEF_ADDR_MAGIC  0x1F80
+#define HEF_ADDR_P1     0x1F81
+#define HEF_ADDR_P2     0x1F82
+#define HEF_ADDR_SN     0x1F83 // 9 bytes: 0x1F83..0x188B
+#define HEF_MAGIC_VAL   0xA5
+
+static uint8_t HEF_ReadByte(uint16_t addr)
+{
+    PMADRL = (uint8_t)(addr & 0xFF);        // Loads 0x80
+    PMADRH = (uint8_t)((addr >> 8) & 0xFF); // Loads 0x1F
+    PMCON1bits.CFGS = 0; // Access Program Flash (HEF)
+    PMCON1bits.RD = 1;
+    __asm
+    nop
+    nop
+    __endasm;
+    return PMDATL;
+}
+
+static void HEF_SaveProfiles(void)
+{
+    uint8_t gie_state = INTCONbits.GIE;
+    uint8_t i;
+    uint8_t data[12];
+    data[0] = HEF_MAGIC_VAL;
+    data[1] = Player1_Idx;
+    data[2] = Player2_Idx;
+    // Copy the SerialNumber
+    for (i=0;i<9;i++) {
+       data[3+i] = SerialStringDesc[2+i*2];
+    }
+
+    INTCONbits.GIE = 0; // Mandatory during Flash erase/write
+
+    // 1. Erase the 32-word HEF row at 0x1F80..0x1F9F
+    PMADRL = (uint8_t)(HEF_ADDR_MAGIC & 0xFF);        // Loads 0x80
+    PMADRH = (uint8_t)((HEF_ADDR_MAGIC >> 8) & 0xFF); // Loads 0x1F
+    PMCON1bits.CFGS = 0;
+    PMCON1bits.FREE = 1;
+    PMCON1bits.WREN = 1;
+    PMCON2 = 0x55;
+    PMCON2 = 0xAA;
+    PMCON1bits.WR = 1;
+    __asm
+    nop
+    nop
+    __endasm;
+    PMCON1bits.WREN = 0;
+
+    // 2. Write the 12 bytes (Magic, Player1_Idx, Player2_Idx, SerialNo) using write latches
+    for (i = 0; i < 12; i++) {
+        uint16_t addr = HEF_ADDR_MAGIC+i;
+        PMADRL = (uint8_t)(addr & 0xFF);
+        PMADRH = (uint8_t)((addr+i >> 8) & 0xFF);
+        PMDATH = 0x3F; // Upper 6 bits blank (0x3FFF unprogrammed)
+        PMDATL = data[i];
+        PMCON1bits.CFGS = 0;
+        PMCON1bits.FREE = 0;
+        PMCON1bits.LWLO = (i < 11) ? 1 : 0; // Load latches for i=0,1; commit on i=2
+        PMCON1bits.WREN = 1;
+        PMCON2 = 0x55;
+        PMCON2 = 0xAA;
+        PMCON1bits.WR = 1;
+        __asm
+        nop
+        nop
+        __endasm;
+    }
+    PMCON1bits.WREN = 0;
+    INTCONbits.GIE = gie_state;
+}
+
 
 static void InitializeSystem(void)
 {
@@ -135,11 +216,18 @@ static void InitializeSystem(void)
     ANSELA =        0x00;
     ANSELB =        0x00;
     ANSELC =        0x00;
-/*
-    OSCTUNE =       0x00;
-    OSCCON =        0xFC;           // 16MHz HFINTOSC with 3x PLL enabled (48MHz operation)
-    ACTCON =        0x90;           // Enable active clock tuning with USB
-*/
+
+    // Disable comparators and serial peripherals so all pins act as pure digital GPIOs
+    CM1CON0 = 0x00;
+    CM2CON0 = 0x00;
+    SSP1CON1 = 0x00;
+    RCSTA = 0x00;
+    TXSTA = 0x00;
+
+    // Set initial LED states (OFF)
+    P1LED = 0;
+    P2LED = 0;
+
     OPTION_REG =    0xC3;           // Set prescaler to 256
 
     // Setup Timer2 for 1ms Debounce Checking
@@ -147,8 +235,24 @@ static void InitializeSystem(void)
     T2CONbits.T2OUTPS = 0b0000;  // 1:1 Postscaler
     T2CONbits.T2CKPS  = 0b11;    // 1:4 Prescaler
     PR2 = 187;                   // Match value for 1ms intervals at 48MHz/4
+    PIR1bits.TMR2IF = 0;
     PIE1bits.TMR2IE = 1;         // Enable Timer2 Interrupts
     T2CONbits.TMR2ON = 1;        // Turn on timer
+
+    if (HEF_ReadByte(HEF_ADDR_MAGIC) == HEF_MAGIC_VAL) {
+        uint8_t p1 = HEF_ReadByte(HEF_ADDR_P1);
+        uint8_t p2 = HEF_ReadByte(HEF_ADDR_P2);
+        if (p1 <= 8 && (p1 & 0x01) == 0) Player1_Idx = p1;
+        if (p2 <= 8 && (p2 & 0x01) == 0) Player2_Idx = p2;
+
+        uint8_t j;
+        for (j=0;j<9;j++) {
+            uint8_t ch = HEF_ReadByte(HEF_ADDR_SN + j);
+            if (ch >= 0x20 && ch <= 0x7E) {
+                SerialStringDesc[2 + (j << 1)] = ch;
+            }
+        }
+    }
 
 }
 
@@ -180,7 +284,7 @@ uint8_t const kbd_scancodes[6][10] = {
 void PrepareTxBuffer(uint8_t profile, uint8_t bitfield, uint8_t InterfaceNo)
 {
     uint8_t payloadIdx=2;
-    uint8_t* HIDTxBuffer = GetEpTxBuffer(InterfaceNo);
+    volatile uint8_t* HIDTxBuffer = (InterfaceNo == P1HidNo) ?hid1_in_buf: hid2_in_buf;
 
     HIDTxBuffer[0] = 0x00;                          // Modifier Key Bits (we are not using any)
     HIDTxBuffer[1] = 0x00;                          // Second Byte always 0 (Padding Byte)
@@ -190,7 +294,7 @@ void PrepareTxBuffer(uint8_t profile, uint8_t bitfield, uint8_t InterfaceNo)
        if (bitfield & (1<<i)) {
           if (kbd_scancodes[i][profile+1]) {
              HIDTxBuffer[0] |= kbd_scancodes[i][profile];
-          } else {
+          } else if (payloadIdx<8) {
              HIDTxBuffer[payloadIdx]= kbd_scancodes[i][profile];
              payloadIdx++;
           }
@@ -209,89 +313,152 @@ void ProcessIncommingData(uint8_t leds)
     // first bit for num lock, second for caps etc..
 #ifdef HID_LEDS
 // DEBUGGING ONLY : use the SCOLL/CAPSLOCK leds
-    P1LED = (leds & 0x01)==0;
-    P2LED = (leds & 0x02)==0;
+    P1LED = (leds & 0x01)!=0;
+    P2LED = (leds & 0x02)!=0;
 #endif
 }
 
 
 #ifdef INC_CDC
-void ProcessSerial(uint8_t InterfaceNo,uint8_t count)
+#define CMD_BUF_LEN 32
+static char cmdBuf[CMD_BUF_LEN];
+static uint8_t cmdIdx = 0;
+
+static void CDCPrint(const char *str)
 {
-   uint8_t* CdcRxBuffer = GetEpRxBuffer(InterfaceNo);
-   uint8_t* CdcTxBuffer = GetEpTxBuffer(InterfaceNo);
+    volatile uint8_t *dst = cdc_in_buf;
+    uint8_t len = 0;
 
-#ifndef HID_LEDS
-   // TODO: Update this to scan for LED update messages (0 though 4 based on player profile)
-   // Parse text stream (line by line?)
-   // If token = CMD
-   //      SET P1 = 0..4
-   //    If setting P1 Player1_Idx = new profile <<1;
-   //    If setting P2 Player2_Idx = new profile <<1;
-   //    If SAVE cmd - write profiles to the EEPROM
-   // Parse text stream looking for LEDx = 1/0 strings
-   //   for each LEDx in string
-   //     if (x == Player1_Idx <<1 ) P1LED = on/off
-   //     if (x == Player2_Idx <<1 ) P2LED = on/off
-/**
- * Parses the USB CDC receive buffer for "ledX = Y" commands.
- * @param buffer - Pointer to the USB receive buffer
- * @param length - Number of bytes actually received
- */
-   // 1. Ensure the buffer is null-terminated so string functions are safe
-   if (count < CdcReportByteCount) {
-       CdcRxBuffer[count] = '\0';
-   } else {
-       CdcRxBuffer[63] = '\0'; // Prevents buffer overflow
-   }
+    while (!IsUsbTxReady(CdcNo));
 
-   // Variables to hold parsed values
-   int led_num = 0;
-   int led_state = 0;
-
-   // 2. Parse using sscanf. It looks for the literal "led", an integer,
-   // the literal " = ", and a second integer.
-   // sscanf returns the number of successfully matched fields (we expect 2).
-   if (sscanf(CdcRxBuffer, "led%d = %d", &led_num, &led_state) == 2)
-   {
-       // 3. Execute the command based on the parsed values
-       if (led_num<<1 == Player1_Idx) P1LED = led_state;
-       if (led_num<<1 == Player2_Idx) P2LED = led_state;
-   }
-
-// ToDo: Could there be multiple strings per USB packet?
-#else
-   // For now do nothing... but will want to reivew the BDT[EP].CNT and then cycle through bytes
-   for (uint8_t i=0;i<count;i++){
-     *CdcTxBuffer = *CdcRxBuffer;
-      CdcRxBuffer++;
-      CdcTxBuffer++;
-   }
-
-   CDCSend(CdcNo,count);
-#endif
+    while (str[len] != '\0' && len < CdcReportByteCount) {
+        dst[len] = str[len];
+        len++;
+    }
+    if (len > 0) {
+        while (!CDCSend(CdcNo, len)); // Wait if previous IN packet is still pending
+    }
 }
-#endif
+
+static void ExecuteCommand(void)
+{
+    cmdBuf[cmdIdx] = '\0';
+
+    // Trim leading spaces
+    char *p = cmdBuf;
+    while (*p == ' ') p++;
+    if (*p == '\0') return;
+
+    // 1. "LED <idx> <val>" (e.g., "LED 1 1" or "LED 2 0")
+    if (p[0] == 'L' && p[1] == 'E' && p[2] == 'D' && p[3] == ' ') {
+        uint8_t led = p[4] - '0';
+        uint8_t val = p[6] - '0';
+        if (p[5] == ' ' && (val == 0 || val == 1)) {
+            uint8_t doubled = led << 1;
+            if (doubled == Player1_Idx || led == 1) { P1LED = (val != 0); CDCPrint("OK\r\n"); return; }
+            if (doubled == Player2_Idx || led == 2) { P2LED = (val != 0); CDCPrint("OK\r\n"); return; }
+        }
+        CDCPrint("ERR LED\r\n");
+    }
+    // 2. "SET P1 <0..4>" or "SET P2 <0..4>"
+    else if (p[0] == 'S' && p[1] == 'E' && p[2] == 'T' && p[3] == ' ' && p[4] == 'P') {
+        uint8_t player = p[5] - '0';
+        uint8_t prof = p[7] - '0';
+        if (p[6] == ' ' && prof <= 4) {
+            if (player == 1) { Player1_Idx = prof << 1; cachePlayerA = 0xFF; CDCPrint("OK\r\n"); return; }
+            if (player == 2) { Player2_Idx = prof << 1; cachePlayerB = 0xFF; CDCPrint("OK\r\n"); return; }
+        }
+        CDCPrint("ERR SET\r\n");
+    }
+    // 3. "STATUS"
+    else if (p[0] == 'S' && p[1] == 'T' && p[2] == 'A' && p[3] == 'T') {
+        char resp[16] = "P1:0 P2:0\r\n";
+        resp[3] = '0' + (Player1_Idx >> 1);
+        resp[8] = '0' + (Player2_Idx >> 1);
+        CDCPrint(resp);
+    }
+    // 4. "SAVE"
+    else if (p[0] == 'S' && p[1] == 'A' && p[2] == 'V' && p[3] == 'E') {
+        HEF_SaveProfiles();
+        CDCPrint("SAVED\r\n");
+    }
+    // 5. "?" or "HELP"
+    else if (p[0] == '?' || (p[0] == 'H' && p[1] == 'E' && p[2] == 'L' && p[3] == 'P')) {
+
+        CDCPrint("CMDS: LED <1-2> <0|1>, SET P<1-2> <0-4>\r\n");
+        CDCPrint("      STATUS, SAVE, ?\r\n");
+/*
+        CDCPrint("CMDS: STATUS - show player profiles\r\n");
+        CDCPrint("      LED <1-2> <0|1> - set LED on/off\r\n");
+        CDCPrint("      SET P<1-2> <0-4> -select player profile\r\n");
+        CDCPrint("      SAVE - store profiles in EEPROM\r\n");
+        CDCPrint("      HELP/? - print this text\r\n");
+*/
+    }
+    // 6. "SN <9-char-serial>" (e.g., "SN YAMKE0002" followed by "SAVE")
+    else if (p[0] == 'S' && p[1] == 'N' && p[2] == ' ') {
+        uint8_t k;
+        for (k = 0; k < 9; k++) {
+            if (p[3 + k] == '\0') break;
+        }
+        if (k == 9 && p[12] == '\0') {
+            for (k = 0; k < 9; k++) {
+                SerialStringDesc[2 + (k << 1)] = p[3 + k];
+            }
+            CDCPrint("OK (RUN SAVE & REBOOT)\r\n");
+        } else {
+            CDCPrint("ERR SN (9 CHARS)\r\n");
+        }
+    }
+    // 7. "REBOOT"
+    else if (p[0] == 'R' && p[1] == 'E' && p[2] == 'B' && p[3] == 'O' && p[4] == 'O' && p[5] == 'T') {
+       __asm
+       reset
+       __endasm;
+    }
+    else {
+        CDCPrint("ERR CMD\r\n");
+    }
+}
+
+void ProcessSerial(uint8_t InterfaceNo, uint8_t count)
+{
+    (void)InterfaceNo;
+    uint8_t i;
+    for (i = 0; i < count; i++) {
+        uint8_t c = cdc_out_buf[i];
+        // Convert lowercase a-z to uppercase A-Z for case-insensitive commands
+        if (c >= 'a' && c <= 'z') c -= 32;
+
+        if (c == '\r' || c == '\n') {
+            if (cmdIdx > 0) {
+                ExecuteCommand();
+                cmdIdx = 0;
+            }
+        } else if (c == 0x08 || c == 0x7F) { // Backspace
+            if (cmdIdx > 0) cmdIdx--;
+        } else if (cmdIdx < (CMD_BUF_LEN - 1)) {
+            cmdBuf[cmdIdx++] = c;
+        }
+    }
+}
+
+#endif // INC_CDC
 
 
 static void CheckUsb(void)
 {
-  #ifdef USB_ENABLED
    if(IsUsbDataAvailable(P1HidNo) > 0 )
    {
-       uint8_t* HIDRxBuffer = GetEpRxBuffer(P1HidNo);
-       ProcessIncommingData(HIDRxBuffer[0]);
+       ProcessIncommingData(hid1_out_buf[0]);
        ReArmInterface(P1HidNo);
    }
 
-#ifdef INC_HID2
    if(IsUsbDataAvailable(P2HidNo) > 0 )
    {
-       uint8_t* HIDRxBuffer = GetEpRxBuffer(P2HidNo);
-       ProcessIncommingData(HIDRxBuffer[0]);
+       ProcessIncommingData(hid2_out_buf[0]);
        ReArmInterface(P2HidNo);
    }
-#endif
 
 #ifdef INC_CDC
    uint8_t cdcCount = IsUsbDataAvailable(CdcNo);
@@ -301,7 +468,6 @@ static void CheckUsb(void)
        ReArmInterface(CdcNo);
    }
 #endif
-  #endif
 }
 
 void ProcessIO(void)
@@ -316,25 +482,22 @@ void ProcessIO(void)
         PrepareTxBuffer(Player1_Idx, db_PlayerA, P1HidNo);
         if (HIDSend(P1HidNo)) cachePlayerA = db_PlayerA;
     }
-/*
+
     if (cachePlayerB != db_PlayerB) {
         PrepareTxBuffer(Player2_Idx,db_PlayerB, P2HidNo);
         if (HIDSend(P2HidNo)) cachePlayerB = db_PlayerB;
     }
-*/
+
 }
 
 int app_main(void)
 {
     InitializeSystem();
 
-    P2LED = 1;
-#ifdef USB_ENABLED
     InitializeUSB();
 
     EnableUSBModule();
 
-#endif
     EnableInterrupts();
 
     while(1) {

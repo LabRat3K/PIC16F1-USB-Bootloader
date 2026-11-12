@@ -27,14 +27,6 @@ __at (0x20E0) volatile uint8_t cdc_comm_out_buf[8];
 __at (0x20E8) volatile uint8_t cdc_comm_in_buf[8];
 __at (0x2100) volatile uint8_t cdc_out_buf[CdcReportByteCount];
 __at (0x2140) volatile uint8_t cdc_in_buf[CdcReportByteCount];
-/*
-volatile uint8_t hid1_out_buf[HidReportByteCount];
-volatile uint8_t hid1_in_buf[HidReportByteCount];
-volatile uint8_t hid2_out_buf[HidReportByteCount];
-volatile uint8_t hid2_in_buf[HidReportByteCount];
-volatile uint8_t cdc_out_buf[CdcReportByteCount];
-volatile uint8_t cdc_in_buf[CdcReportByteCount];
-*/
 
 BufferInfo Buffers[(InterfaceCount * 2)] =
 {
@@ -101,7 +93,7 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x02,   // CONFIGURATION descriptor type
     9+HID1_CONFIG_LENGTH+CDC_CONFIG_LENGTH+HID2_CONFIG_LENGTH,   // Total length of data for this cfg LSB
     0x00,   // Total length of data for this cfg MSB
-    0x01+NUM_CDC_INTF+NUM_HID2_INTF,  // Number of interfaces in this cfg
+    0x02+NUM_CDC_INTF,  // Number of interfaces in this cfg
     0x01,   // Index value of this configuration
     SCON,   // Configuration string index
     0x80,   // Attributes
@@ -157,7 +149,6 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x00,   // Max Packet Size MSB
     0x01,   // Interval (1 millisecond)
     },
-#ifdef INC_HID2
     {
     // =============================
     // INTERFACE 1: HID 2  In (0x82)
@@ -166,7 +157,6 @@ __at (0x1E00+DeviceDescriptorSize) const ConfigStruct ConfigurationDescriptor =
     0x09, 0x21, 0x11, 0x01, 0x00, 0x01, 0x22, 0x3F, 0x00, // HID Descriptor
     0x07, 0x05, 0x82, 0x03, 0x08, 0x00, 0x01,             // Endpoint 2 IN
     },
-#endif
 
 #ifdef INC_CDC
     {
@@ -266,6 +256,13 @@ const uint8_t StringDescriptor2[] = {
     'Y', 0, 'e', 0, 't', 0, ' ', 0, 'A', 0, 'n', 0, 'o', 0, 't', 0, 'h', 0, 'e', 0, 'r', 0, ' ', 0,
     'M', 0, 'a', 0, 'm', 0, 'e', 0, 'K', 0, 'B', 0, 'D', 0
 };
+
+// Serial number string descriptor: "YAMKE0001" (2 + 9*2 = 20 bytes = 0x16)
+const uint8_t StringDescriptor3[] = {
+    20, 0x03,
+    'Y', 0, 'A', 0, 'M', 0, 'K', 0, 'E', 0, '0', 0, '0', 0, '0', 0, '1', 0
+};
+
 #endif
 
 #endif	/* USBDESCRIPTORS_INC */
